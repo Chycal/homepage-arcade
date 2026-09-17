@@ -1,0 +1,21 @@
+# 本地私密配置示例
+# 复制为 application-local.yml（运行目录下，已被 .gitignore 忽略）并填入真实值。
+# 也可改用环境变量：DB_URL / DB_USERNAME / DB_PASSWORD / ADMIN_USERNAME / ADMIN_PASSWORD
+
+spring:
+  datasource:
+    url: jdbc:mariadb://localhost:3306/homepage?useUnicode=true&characterEncoding=utf8mb4&serverTimezone=Asia/Shanghai
+    username: your_db_user
+    password: your_db_password
+
+# 首次启动时若该用户不存在，将自动创建 ADMIN 角色账号
+app:
+  admin:
+    username: your_admin_name
+    password: your_admin_password
+
+# 可选：固定 JWT 密钥（Base64 编码的 HMAC-SHA512 密钥，≥64字节）。
+# 不配置则每次重启随机生成，所有用户需重新登录。
+# jwt:
+#   access-secret: <base64>
+#   refresh-secret: <base64>

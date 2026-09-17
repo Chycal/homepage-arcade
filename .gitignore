@@ -1,0 +1,21 @@
+# 构建产物
+target/
+node_modules/
+backend/src/main/resources/static/
+
+# 运行时数据
+sessions/
+snapshots/
+
+# 日志与崩溃转储
+*.log
+hs_err_pid*.log
+
+# 私密配置（真实凭据），使用 application-local.example.yml 作为模板
+application-local.yml
+
+# 工具与本地文件
+.codebuddy/
+.remote-ssh.json
+.DS_Store
+Thumbs.db
