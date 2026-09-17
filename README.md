@@ -15,6 +15,17 @@
 - **访问统计** — 记录访客页面访问，提供总访问量、独立访客数与今日访问数
 - **实时通信** — WebSocket 驱动五子棋房间状态同步
 
+## 快速部署（Release 包）
+
+从 [Releases](https://github.com/Chycal/homepage-arcade/releases) 下载 `homepage-arcade-<版本>-bundle.zip`，解压后：
+
+```bash
+./start.sh        # Windows 双击 start.bat
+# 首次运行会生成 application-local.yml，填入数据库与管理员配置后再运行一次
+```
+
+数据表全部自动创建，详见 [deploy/DEPLOY.md](deploy/DEPLOY.md)。
+
 ## 技术栈
 
 | 层级 | 技术 |
@@ -28,6 +39,11 @@
 
 ```
 .
+├── .github/workflows/release.yml # 打 v* tag 自动构建并发 Release
+├── deploy/                       # Release 部署包内容（启动脚本 + 部署指南）
+│   ├── start.sh                  # Linux/macOS 一键启动
+│   ├── start.bat                 # Windows 一键启动
+│   └── DEPLOY.md                 # 部署指南
 ├── frontend/                     # Vue 3 前端
 │   ├── package.json
 │   ├── vite.config.js            # dev:5173，代理 /api → :8080，构建输出到 backend static
@@ -67,14 +83,14 @@
 └── projectStructure.md           # 项目结构文档
 ```
 
-## 快速开始
+## 从源码构建
 
 ### 环境要求
 
 - **JDK 11+**
 - **Maven 3.6+**
 - **Node.js 16+**
-- **MariaDB / MySQL**（排行榜、账号、挂机生活、管理面板等功能依赖数据库）
+- **MariaDB / MySQL**
 
 ### 1. 配置私密信息
 
@@ -109,26 +125,18 @@ java -jar target/homepage-backend-1.0.0.jar
 
 ### 数据库初始化
 
-`DataInitializer` 在应用启动时自动执行：
-
-- `CREATE TABLE IF NOT EXISTS` 创建 `banned_players`、`idle_life_saves`、`idle_life_items` 三张表
-- 为存量表 `snake_scores` 自动补齐 `start_time` / `end_time` / `duration_seconds` 三列
-- 若配置了 `app.admin.username` / `app.admin.password` 且该用户不存在，自动创建 ADMIN 角色管理员
-
-注意：`users`、`snake_scores`、`visitor_log` 为存量表，需数据库中预先存在，启动时不会自动创建。
-
-### 数据库表
+全部 6 张表由 `DataInitializer` 在应用首次启动时自动创建（`CREATE TABLE IF NOT EXISTS`，全新数据库可直接启动），无需手动执行建表脚本：
 
 | 表名 | 用途 |
 |------|------|
 | `users` | 用户表（用户名/密码/角色/启用状态） |
 | `snake_scores` | 贪吃蛇成绩（含 start_time / end_time / duration_seconds 游戏用时） |
 | `banned_players` | 封禁玩家 |
-| `visitor_log` | 访问记录（ip, page, session_id） |
+| `visitor_log` | 访问记录（ip, page） |
 | `idle_life_saves` | 挂机生活玩家存档 |
 | `idle_life_items` | 挂机生活背包物品 |
 
-- 用户角色：`USER` 普通用户 / `ADMIN` 管理员
+- 用户角色：`USER` 普通用户 / `ADMIN` 管理员；配置了 `app.admin.username` / `app.admin.password` 时，若该用户不存在会自动创建 ADMIN 账号
 - 注意：`snake_scores` 与 `banned_players` 可能存在排序规则不一致，JOIN 查询需显式指定 `COLLATE utf8mb4_general_ci`
 - Refresh Token 为自包含 JWT，不落库；自走棋对战状态不入库（内存 + `sessions/` 目录文件持久化，24 小时过期）
 
@@ -291,6 +299,7 @@ java -jar target/homepage-backend-1.0.0.jar
 5. **WebSocket**：五子棋端点注册在 `/ws/game`
 6. **遗留死代码**：`GameSessionService`、`GameVerifier`、`GameRng`、`IpRateLimiter` 未被任何控制器引用（贪吃蛇服务器反作弊已移除的产物）
 7. **私密配置**：真实凭据只放 `application-local.yml`（已 gitignore）或环境变量，勿提交到仓库
+8. **发版**：打 tag（如 `v1.0.1`）并推送，GitHub Actions 自动构建前端+后端并发布 Release（jar + 启动脚本 bundle）
 
 ## License
 

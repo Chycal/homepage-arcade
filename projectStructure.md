@@ -28,6 +28,11 @@
 ├── README.md                       # 项目说明
 ├── LICENSE                         # MIT 许可证
 ├── .gitignore                      # Git 忽略规则
+├── .github/workflows/release.yml   # 打 v* tag 自动构建并发 Release
+├── deploy/                         # Release 部署包内容
+│   ├── start.sh                    # Linux/macOS 一键启动脚本
+│   ├── start.bat                   # Windows 一键启动脚本
+│   └── DEPLOY.md                   # 部署指南
 ├── frontend/                       # Vue 3 前端
 │   ├── package.json                # 前端依赖
 │   ├── vite.config.js              # Vite 配置 (dev:5173, 代理 /api → :8080)
@@ -67,7 +72,7 @@
             │   ├── JwtUtil.java            # JWT 生成/解析工具 (双 Token)
             │   ├── WebMvcConfig.java       # CORS + 静态资源配置
             │   ├── WebSocketConfig.java    # WebSocket 端点注册 (/ws/game)
-            │   ├── DataInitializer.java    # 启动初始化 (建表 + 管理员初始化，凭据来自配置)
+            │   ├── DataInitializer.java    # 启动初始化 (全部建表 + 管理员初始化，凭据来自配置)
             │   ├── IpRateLimiter.java      # (遗留，当前未被引用)
             │   └── GlobalExceptionHandler.java  # 全局异常处理
             ├── controller/                 # 控制器层 (REST API)
@@ -111,19 +116,20 @@
 
 ## 三、数据库表
 
+全部 6 张表由 `DataInitializer` 在应用启动时自动创建（`CREATE TABLE IF NOT EXISTS`，全新数据库可直接启动）：
+
 | 表名 | 用途 | 访问层 |
 |------|------|--------|
 | `users` | 用户表（用户名/密码/角色/启用状态/登录失败次数） | `UserRepository` |
 | `snake_scores` | 贪吃蛇成绩（player_name, score, start_time, end_time, duration_seconds） | `ScoreRepository` |
 | `banned_players` | 封禁玩家 (id, player_name, banned_by, banned_at) | `BannedPlayerRepository` |
-| `visitor_log` | 访问记录 (id, ip, page, visit_time, session_id) | `VisitorRepository` |
+| `visitor_log` | 访问记录 (id, ip, page, created_at) | `VisitorRepository` |
 | `idle_life_saves` | 挂机生活玩家存档 | `IdleLifeRepository` |
 | `idle_life_items` | 挂机生活背包物品 | `IdleLifeRepository` |
 
-**建表与初始化**（`DataInitializer`，应用启动时执行）：
-- `CREATE TABLE IF NOT EXISTS`：`banned_players`、`idle_life_saves`、`idle_life_items`
-- 为存量表 `snake_scores` 自动 `ALTER TABLE` 补齐 `start_time` / `end_time` / `duration_seconds` 三列
-- `users`、`snake_scores`、`visitor_log` 为存量表，需数据库中预先存在
+**建表与初始化**（`DataInitializer`，应用启动时先建表再初始化管理员）：
+- `CREATE TABLE IF NOT EXISTS` 创建全部 6 张表，统一 utf8mb4_general_ci
+- 为更早版本的存量 `snake_scores` 表自动 `ALTER TABLE` 补齐 `start_time` / `end_time` / `duration_seconds` 三列
 - 若配置了 `app.admin.username` / `app.admin.password`（环境变量 `ADMIN_USERNAME` / `ADMIN_PASSWORD` 或 gitignore 掉的 `application-local.yml`）且该用户不存在，自动创建 ADMIN 角色管理员；未配置则跳过并告警
 
 **其他要点**：
@@ -316,6 +322,7 @@
 | `backend/pom.xml` | Spring Boot 2.7.18, Spring Security, WebSocket, jjwt 0.11.5, mariadb-java-client 2.7.9 |
 | `backend/src/main/resources/application.yml` | 端口 8080, 数据源（凭据走环境变量占位符）, `spring.config.import` 加载本地私密配置 |
 | `backend/application-local.example.yml` | 私密配置模板：复制为 `application-local.yml` 填入真实值（已 gitignore） |
+| `.github/workflows/release.yml` | 打 `v*` tag 触发：npm 构建前端 → mvn 打包 → jar + 启动脚本打成 bundle 发 GitHub Release |
 
 ---
 
@@ -339,3 +346,4 @@
 8. **WebSocket 端点**: 注册在 `/ws/game`（五子棋），`SecurityConfig` 放行 `/ws/**`。
 9. **私密配置**: 数据库凭据与管理员账号只放 `application-local.yml`（已 gitignore）或环境变量，不写入代码库。
 10. **遗留死代码**: `service/GameSessionService`、`GameVerifier`、`GameRng`、`config/IpRateLimiter` 当前未被任何控制器引用（贪吃蛇反作弊已移除的产物），改动时可忽略；`SecurityConfig` 中 `/api/leaderboard/**` 放行规则亦无对应控制器。
+11. **发版流程**: 更新版本后打 tag（`v1.0.x`）推送，GitHub Actions 自动构建并发布 Release；`deploy/` 目录内容会打进发布包。

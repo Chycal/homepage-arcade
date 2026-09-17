@@ -1,0 +1,58 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '18'
+          cache: 'npm'
+          cache-dependency-path: frontend/package-lock.json
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: 'temurin'
+          java-version: '11'
+          cache: 'maven'
+
+      - name: Build frontend
+        working-directory: frontend
+        run: |
+          npm ci
+          npm run build
+
+      - name: Build backend
+        working-directory: backend
+        run: mvn -B package -DskipTests
+
+      - name: Stage release bundle
+        run: |
+          TAG="${GITHUB_REF_NAME#v}"
+          DIR="homepage-arcade-${TAG}"
+          mkdir -p "dist/${DIR}"
+          cp backend/target/homepage-backend-*.jar "dist/${DIR}/homepage-arcade-${TAG}.jar"
+          cp backend/application-local.example.yml "dist/${DIR}/"
+          cp deploy/start.sh deploy/start.bat deploy/DEPLOY.md "dist/${DIR}/"
+          chmod +x "dist/${DIR}/start.sh"
+          cd dist && zip -q -r "../homepage-arcade-${TAG}-bundle.zip" "${DIR}" && cd ..
+          ls -la dist/
+
+      - name: Upload release assets
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            homepage-arcade-*-bundle.zip
+          generate_release_notes: true
+          fail_on_unmatched_files: true
