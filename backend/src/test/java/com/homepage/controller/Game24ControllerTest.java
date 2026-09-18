@@ -183,7 +183,9 @@ class Game24ControllerTest {
                 Map<String, Object> resp = controller.deal();
                 int[] cards = (int[]) resp.get("cards");
                 assertThat(cards).hasSize(4);
-                assertThat(cards).allMatch(c -> c >= 1 && c <= 13);
+                for (int c : cards) {
+                    assertThat(c).isBetween(1, 13);
+                }
             }
         }
     }
