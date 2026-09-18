@@ -83,13 +83,19 @@ class GomokuGameTest {
         @Test
         @DisplayName("白棋五连同样获胜")
         void whiteWinsToo() {
-            // 黑棋散子应手，白棋纵向连五（第 9 步黑先成五）
-            play(new int[][]{
-                    {0, 0}, {10, 5}, {0, 1}, {11, 5}, {0, 2}, {12, 5}, {0, 3}, {13, 5}, {0, 4}, {14, 5}
-            });
-            assertThat(game.getWinner()).isEqualTo(GomokuGame.BLACK);
-            // 白棋此时只有纵向四连
-            assertThat(game.getMoveCount()).isEqualTo(9);
+            // 白棋纵向连五（黑棋第 5 颗散子落下时白已先成五，黑不能成五威胁）
+            assertThat(game.place(0, 0, GomokuGame.BLACK)).isTrue();
+            assertThat(game.place(7, 3, GomokuGame.WHITE)).isTrue();
+            assertThat(game.place(14, 14, GomokuGame.BLACK)).isTrue();
+            assertThat(game.place(7, 4, GomokuGame.WHITE)).isTrue();
+            assertThat(game.place(0, 10, GomokuGame.BLACK)).isTrue();
+            assertThat(game.place(7, 5, GomokuGame.WHITE)).isTrue();
+            assertThat(game.place(14, 0, GomokuGame.BLACK)).isTrue();
+            assertThat(game.place(7, 6, GomokuGame.WHITE)).isTrue();
+            assertThat(game.place(0, 12, GomokuGame.BLACK)).isTrue();
+            assertThat(game.place(7, 7, GomokuGame.WHITE)).isTrue();
+            assertThat(game.getWinner()).isEqualTo(GomokuGame.WHITE);
+            assertThat(game.getMoveCount()).isEqualTo(10);
         }
 
         @Test

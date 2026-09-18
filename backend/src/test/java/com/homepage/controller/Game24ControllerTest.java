@@ -47,8 +47,8 @@ class Game24ControllerTest {
         @Test
         @DisplayName("运算优先级正确：乘除先于加减")
         void operatorPrecedence() {
-            // 2+2*11 = 24；若错误地从左到右计算会得 48
-            Map<String, Object> resp = verifyOk("2+2*11", 2, 2, 11, 13);
+            // 2+2*11*1 = 24；若错误地从左到右计算会得 (2+2)*11*1 = 44
+            Map<String, Object> resp = verifyOk("2+2*11*1", 2, 2, 11, 1);
             assertThat(((Number) resp.get("result")).doubleValue()).isEqualTo(24.0);
         }
 
