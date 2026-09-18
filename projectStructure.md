@@ -29,6 +29,7 @@
 ├── LICENSE                         # MIT 许可证
 ├── .gitignore                      # Git 忽略规则
 ├── .github/workflows/release.yml   # 打 v* tag 自动构建并发 Release
+├── .github/workflows/ci.yml        # push/PR 自动跑后端测试 + 前端构建检查
 ├── deploy/                         # Release 部署包内容
 │   ├── start.sh                    # Linux/macOS 一键启动脚本
 │   ├── start.bat                   # Windows 一键启动脚本
@@ -60,7 +61,7 @@
     ├── pom.xml                     # Maven 依赖
     ├── SECURITY.md                 # 账号系统安全架构说明
     ├── application-local.example.yml  # 私密配置模板（复制为 application-local.yml，勿提交）
-    └── src/main/
+    ├── src/main/
         ├── resources/
         │   ├── application.yml     # 应用配置 (端口/数据库/日志)
         │   └── static/             # 前端构建产物 (部署时自动生成)
@@ -110,6 +111,12 @@
                 ├── GomokuGame.java         # 五子棋引擎 (棋盘/落子/胜负)
                 ├── GomokuAI.java           # 五子棋 AI (权重评估算法)
                 └── GameWebSocketHandler.java # WebSocket 握手处理器
+
+    backend/src/test/java/com/homepage/   # 单元测试 (JUnit 5 + AssertJ)
+        ├── game/GomokuGameTest.java      # 五子棋引擎: 胜负判定/非法落子/悔棋/重开
+        ├── game/GomokuAITest.java        # 五子棋 AI: 开局/成五/封堵/攻防优先级
+        ├── controller/Game24ControllerTest.java  # 24点: 求值/用牌规则/注入拦截
+        └── config/JwtUtilTest.java       # JWT: 签发解析往返/双密钥隔离/防篡改
 ```
 
 ---
@@ -323,6 +330,7 @@
 | `backend/src/main/resources/application.yml` | 端口 8080, 数据源（凭据走环境变量占位符）, `spring.config.import` 加载本地私密配置 |
 | `backend/application-local.example.yml` | 私密配置模板：复制为 `application-local.yml` 填入真实值（已 gitignore） |
 | `.github/workflows/release.yml` | 打 `v*` tag 触发：npm 构建前端 → mvn 打包 → jar + 启动脚本打成 bundle 发 GitHub Release |
+| `.github/workflows/ci.yml` | push(main)/PR 触发：`mvn test` 后端测试 + 前端构建检查 |
 
 ---
 
@@ -347,3 +355,4 @@
 9. **私密配置**: 数据库凭据与管理员账号只放 `application-local.yml`（已 gitignore）或环境变量，不写入代码库。
 10. **遗留死代码**: `service/GameSessionService`、`GameVerifier`、`GameRng`、`config/IpRateLimiter` 当前未被任何控制器引用（贪吃蛇反作弊已移除的产物），改动时可忽略；`SecurityConfig` 中 `/api/leaderboard/**` 放行规则亦无对应控制器。
 11. **发版流程**: 更新版本后打 tag（`v1.0.x`）推送，GitHub Actions 自动构建并发布 Release；`deploy/` 目录内容会打进发布包。
+12. **测试**: 核心纯逻辑有 JUnit 5 单元测试（五子棋引擎与 AI、24点求值器、JWT 工具，位于 `backend/src/test`），push/PR 时 CI 自动运行；改动对应逻辑请同步维护测试。

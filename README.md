@@ -1,5 +1,7 @@
 # Personal Homepage & Games
 
+[![CI](https://github.com/Chycal/homepage-arcade/actions/workflows/ci.yml/badge.svg)](https://github.com/Chycal/homepage-arcade/actions/workflows/ci.yml)
+
 基于 **Spring Boot 2.7 + Vue 3** 的全栈个人主页项目，集成技能展示、项目卡片，以及贪吃蛇、五子棋、24点、自走棋、挂机生活五个小游戏，并带用户认证系统与管理面板。
 
 ## 功能特性
@@ -300,6 +302,15 @@ java -jar target/homepage-backend-1.0.0.jar
 6. **遗留死代码**：`GameSessionService`、`GameVerifier`、`GameRng`、`IpRateLimiter` 未被任何控制器引用（贪吃蛇服务器反作弊已移除的产物）
 7. **私密配置**：真实凭据只放 `application-local.yml`（已 gitignore）或环境变量，勿提交到仓库
 8. **发版**：打 tag（如 `v1.0.1`）并推送，GitHub Actions 自动构建前端+后端并发布 Release（jar + 启动脚本 bundle）
+
+## 测试
+
+核心纯逻辑配有 JUnit 5 单元测试（`backend/src/test`），覆盖五子棋胜负判定与 AI 攻防、24点表达式求值（含注入拦截）、JWT 签发/解析/防篡改。push 与 PR 时 CI 自动运行，也可手动执行：
+
+```bash
+cd backend
+mvn test
+```
 
 ## License
 

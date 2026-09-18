@@ -1,0 +1,147 @@
+package com.homepage.config;
+
+import io.jsonwebtoken.Claims;
+import io.jsonwebtoken.JwtException;
+import io.jsonwebtoken.Jwts;
+import io.jsonwebtoken.security.Keys;
+import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.DisplayName;
+import org.junit.jupiter.api.Nested;
+import org.junit.jupiter.api.Test;
+
+import javax.crypto.SecretKey;
+import java.security.SecureRandom;
+import java.util.Base64;
+
+import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
+
+/**
+ * JWT 工具单元测试：签发/解析往返、双密钥隔离、过期时间、篡改拒绝。
+ * 通过构造函数直接传入 Base64 密钥，不依赖 Spring 上下文。
+ */
+class JwtUtilTest {
+
+    private String accessSecret;
+    private String refreshSecret;
+    private JwtUtil jwtUtil;
+
+    @BeforeEach
+    void setUp() {
+        accessSecret = randomBase64Key();
+        refreshSecret = randomBase64Key();
+        jwtUtil = new JwtUtil(accessSecret, refreshSecret);
+    }
+
+    private static String randomBase64Key() {
+        byte[] key = new byte[64]; // HMAC-SHA512 要求 ≥64 字节
+        new SecureRandom().nextBytes(key);
+        return Base64.getEncoder().encodeToString(key);
+    }
+
+    private static SecretKey keyOf(String base64) {
+        return Keys.hmacShaKeyFor(Base64.getDecoder().decode(base64));
+    }
+
+    @Nested
+    @DisplayName("Token 签发与解析")
+    class RoundTrip {
+
+        @Test
+        @DisplayName("Access Token 往返：userId / username / role")
+        void accessTokenRoundTrip() {
+            String token = jwtUtil.generateAccessToken(42L, "alice", "ADMIN");
+            assertThat(jwtUtil.getUserIdFromToken(token)).isEqualTo(42L);
+            assertThat(jwtUtil.extractUsername(token)).isEqualTo("alice");
+            assertThat(jwtUtil.extractRole(token)).isEqualTo("ADMIN");
+            assertThat(jwtUtil.getRoleFromToken(token)).isEqualTo("ADMIN");
+        }
+
+        @Test
+        @DisplayName("Refresh Token 往返：仅携带 userId")
+        void refreshTokenRoundTrip() {
+            String token = jwtUtil.generateRefreshToken(99L);
+            assertThat(jwtUtil.validateRefreshToken(token)).isEqualTo(99L);
+        }
+
+        @Test
+        @DisplayName("Access Token 有效期为 15 分钟")
+        void accessTokenExpiresIn15Minutes() {
+            String token = jwtUtil.generateAccessToken(1L, "u", "USER");
+            Claims claims = Jwts.parserBuilder()
+                    .setSigningKey(keyOf(accessSecret))
+                    .build()
+                    .parseClaimsJws(token)
+                    .getBody();
+            long diff = claims.getExpiration().getTime() - claims.getIssuedAt().getTime();
+            assertThat(diff).isEqualTo(15 * 60 * 1000L);
+        }
+
+        @Test
+        @DisplayName("Refresh Token 有效期为 7 天")
+        void refreshTokenExpiresIn7Days() {
+            String token = jwtUtil.generateRefreshToken(1L);
+            Claims claims = Jwts.parserBuilder()
+                    .setSigningKey(keyOf(refreshSecret))
+                    .build()
+                    .parseClaimsJws(token)
+                    .getBody();
+            long diff = claims.getExpiration().getTime() - claims.getIssuedAt().getTime();
+            assertThat(diff).isEqualTo(7 * 24 * 60 * 60 * 1000L);
+        }
+    }
+
+    @Nested
+    @DisplayName("密钥隔离与防篡改")
+    class Security {
+
+        @Test
+        @DisplayName("Access 密钥与 Refresh 密钥互相隔离：Refresh Token 不能当 Access Token 用")
+        void keysAreIsolated() {
+            String refreshToken = jwtUtil.generateRefreshToken(7L);
+            assertThatThrownBy(() -> jwtUtil.validateAccessToken(refreshToken))
+                    .isInstanceOf(JwtException.class);
+            String accessToken = jwtUtil.generateAccessToken(7L, "u", "USER");
+            assertThatThrownBy(() -> jwtUtil.validateRefreshToken(accessToken))
+                    .isInstanceOf(JwtException.class);
+        }
+
+        @Test
+        @DisplayName("用错误密钥签发的 Token 被拒绝")
+        void wrongKeyRejected() {
+            JwtUtil other = new JwtUtil(randomBase64Key(), randomBase64Key());
+            String token = other.generateAccessToken(1L, "u", "USER");
+            assertThatThrownBy(() -> jwtUtil.validateAccessToken(token))
+                    .isInstanceOf(JwtException.class);
+        }
+
+        @Test
+        @DisplayName("篡改后的 Token 被拒绝")
+        void tamperedTokenRejected() {
+            String token = jwtUtil.generateAccessToken(1L, "u", "USER");
+            String tampered = token.substring(0, token.length() - 2) + "xx";
+            assertThatThrownBy(() -> jwtUtil.validateAccessToken(tampered))
+                    .isInstanceOf(JwtException.class);
+        }
+
+        @Test
+        @DisplayName("垃圾字符串被拒绝")
+        void garbageRejected() {
+            assertThatThrownBy(() -> jwtUtil.validateAccessToken("not-a-jwt"))
+                    .isInstanceOf(RuntimeException.class);
+        }
+
+        @Test
+        @DisplayName("未配置密钥时自动随机生成（两次实例密钥不同，旧 Token 失效）")
+        void autoGeneratedKeysDiffer() {
+            JwtUtil a = new JwtUtil("", "");
+            JwtUtil b = new JwtUtil("", "");
+            String token = a.generateAccessToken(1L, "u", "USER");
+            // b 没有相同的密钥，无法验证 a 签发的 Token
+            assertThatThrownBy(() -> b.validateAccessToken(token))
+                    .isInstanceOf(JwtException.class);
+            // a 自己可以正常验证
+            assertThat(a.validateAccessToken(token).getSubject()).isEqualTo("1");
+        }
+    }
+}
