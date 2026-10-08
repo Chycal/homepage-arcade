@@ -113,7 +113,7 @@ npm run build
 ```bash
 cd backend
 mvn package -DskipTests
-java -jar target/homepage-backend-1.0.0.jar
+java -jar target/homepage-backend-1.1.0.jar
 ```
 
 启动后访问：**http://localhost:8080**

@@ -218,7 +218,7 @@
    # 后端构建
    cd backend && mvn package -DskipTests -q
    # 启动
-   java -jar target/homepage-backend-1.0.0.jar
+   java -jar target/homepage-backend-1.1.0.jar
    ```
 4. **前端懒加载**: 除 Home 外所有页面组件均使用动态 `import()`，减小首屏体积。
 5. **认证流程**: 需要认证的 API 由 Spring Security + `JwtAuthenticationFilter` 保护（默认规则 `/api/**` 需认证），前端使用 `authFetch` 自动附加/刷新 Bearer Token。
