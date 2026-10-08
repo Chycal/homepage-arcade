@@ -41,23 +41,11 @@ public class SecurityConfig {
                 .antMatchers("/api/visitor/**").permitAll()
                 // 首页内容 - 公开
                 .antMatchers("/api/profile", "/api/skills", "/api/projects", "/api/health").permitAll()
-                // 贪吃蛇分数提交 - 需要登录
-                .antMatchers("/api/scores/submit").authenticated()
-                // 贪吃蛇排行榜 - 公开查看
-                .antMatchers("/api/scores/top").permitAll()
-                // 游戏 API - 公开（所有游戏开放游玩）
-                .antMatchers("/api/autochess/**").permitAll()
-                .antMatchers("/api/game24/**").permitAll()
-                .antMatchers("/api/leaderboard/**").permitAll()
-                // 挂机生活 - 游客账号创建与游戏配置公开，其余需登录
-                .antMatchers("/api/idle-life/guest", "/api/idle-life/config").permitAll()
                 // WebSocket
                 .antMatchers("/ws/**").permitAll()
                 // 静态资源 - 公开
                 .antMatchers("/", "/index.html", "/favicon.ico", "/favicon.svg").permitAll()
                 .antMatchers("/css/**", "/js/**", "/assets/**", "/fonts/**", "/images/**").permitAll()
-                // 管理员接口
-                .antMatchers("/api/admin/**").hasRole("ADMIN")
                 // 其他 API 需要认证
                 .antMatchers("/api/**").authenticated()
                 // 其他请求允许（SPA fallback）

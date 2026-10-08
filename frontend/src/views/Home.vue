@@ -8,23 +8,8 @@
         <p class="title">{{ profile.title }}</p>
         <p class="bio">{{ profile.bio }}</p>
         <div class="contact-links">
-          <router-link to="/snake" class="btn-contact btn-game">
-            🎮 贪吃蛇
-          </router-link>
           <router-link to="/gomoku" class="btn-contact btn-game">
             ♟ 五子棋
-          </router-link>
-          <router-link to="/game24" class="btn-contact btn-game">
-            🃏 24点
-          </router-link>
-          <router-link to="/autochess" class="btn-contact btn-game">
-            ♟ 自走棋
-          </router-link>
-          <router-link to="/idle-life" class="btn-contact btn-game">
-            ⚔️ 挂机生活
-          </router-link>
-          <router-link v-if="isAdmin" to="/admin" class="btn-contact btn-admin">
-            ⚙ 管理
           </router-link>
           <a v-if="profile.email" :href="'mailto:' + profile.email" class="btn-contact">
             📧 Email
@@ -86,8 +71,6 @@
 </template>
 
 <script>
-import { isAdmin } from '@/utils/auth'
-
 export default {
   name: 'HomeView',
   data() {
@@ -103,9 +86,6 @@ export default {
     initials() {
       const name = this.profile.name || '?'
       return name.charAt(0).toUpperCase()
-    },
-    isAdmin() {
-      return isAdmin()
     }
   },
   mounted() {
@@ -214,17 +194,6 @@ export default {
   border-color: rgba(255, 255, 255, 0.5);
   font-weight: 600;
   animation: pulse-btn 2s infinite;
-}
-
-.btn-admin {
-  background: rgba(255, 215, 0, 0.3);
-  border-color: rgba(255, 215, 0, 0.6);
-  font-weight: 600;
-  color: #ffd54f;
-}
-
-.btn-admin:hover {
-  background: rgba(255, 215, 0, 0.5);
 }
 
 @keyframes pulse-btn {

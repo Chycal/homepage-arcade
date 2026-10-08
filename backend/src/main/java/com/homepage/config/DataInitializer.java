@@ -87,23 +87,6 @@ public class DataInitializer implements CommandLineRunner {
                 ") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci");
             log.info("users 表已就绪");
 
-            // 贪吃蛇成绩表
-            jdbc.execute("CREATE TABLE IF NOT EXISTS snake_scores (" +
-                "id BIGINT AUTO_INCREMENT PRIMARY KEY, " +
-                "player_name VARCHAR(50) NOT NULL DEFAULT '匿名玩家', " +
-                "score INT NOT NULL DEFAULT 0, " +
-                "created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP, " +
-                "start_time DATETIME NULL, " +
-                "end_time DATETIME NULL, " +
-                "duration_seconds BIGINT DEFAULT 0" +
-                ") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci");
-            log.info("snake_scores 表已就绪");
-
-            // snake_scores 新增时间字段（如果不存在则添加，兼容更早版本的存量表）
-            try { jdbc.execute("ALTER TABLE snake_scores ADD COLUMN start_time DATETIME NULL"); log.info("snake_scores: 已添加 start_time 列"); } catch (Exception ignored) {}
-            try { jdbc.execute("ALTER TABLE snake_scores ADD COLUMN end_time DATETIME NULL"); log.info("snake_scores: 已添加 end_time 列"); } catch (Exception ignored) {}
-            try { jdbc.execute("ALTER TABLE snake_scores ADD COLUMN duration_seconds BIGINT DEFAULT 0"); log.info("snake_scores: 已添加 duration_seconds 列"); } catch (Exception ignored) {}
-
             // 访问记录表
             jdbc.execute("CREATE TABLE IF NOT EXISTS visitor_log (" +
                 "id BIGINT AUTO_INCREMENT PRIMARY KEY, " +
@@ -113,59 +96,6 @@ public class DataInitializer implements CommandLineRunner {
                 "KEY idx_visitor_ip (ip)" +
                 ") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci");
             log.info("visitor_log 表已就绪");
-
-            // 封禁玩家表
-            jdbc.execute("CREATE TABLE IF NOT EXISTS banned_players (" +
-                "id BIGINT AUTO_INCREMENT PRIMARY KEY, " +
-                "player_name VARCHAR(100) NOT NULL, " +
-                "banned_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP, " +
-                "banned_by VARCHAR(100), " +
-                "UNIQUE KEY uk_player_name (player_name)" +
-                ") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci");
-            log.info("banned_players 表已就绪");
-
-            // 挂机生活 - 玩家存档表
-            jdbc.execute("CREATE TABLE IF NOT EXISTS idle_life_saves (" +
-                "id BIGINT AUTO_INCREMENT PRIMARY KEY, " +
-                "user_id BIGINT NOT NULL, " +
-                "username VARCHAR(100) NOT NULL, " +
-                "level INT DEFAULT 1, " +
-                "exp BIGINT DEFAULT 0, " +
-                "gold BIGINT DEFAULT 0, " +
-                "current_dungeon INT DEFAULT 0, " +
-                "potion_item VARCHAR(50), " +
-                "helmet VARCHAR(50), " +
-                "chest VARCHAR(50), " +
-                "legs VARCHAR(50), " +
-                "boots VARCHAR(50), " +
-                "boss_last_battle BIGINT DEFAULT 0, " +
-                "battles_won BIGINT DEFAULT 0, " +
-                "bosses_killed BIGINT DEFAULT 0, " +
-                "created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP, " +
-                "updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP, " +
-                "UNIQUE KEY uk_ils_username (username)" +
-                ") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci");
-            log.info("idle_life_saves 表已就绪");
-
-            // 挂机生活 - 背包物品表
-            jdbc.execute("CREATE TABLE IF NOT EXISTS idle_life_items (" +
-                "id BIGINT AUTO_INCREMENT PRIMARY KEY, " +
-                "username VARCHAR(100) NOT NULL, " +
-                "item_key VARCHAR(50) NOT NULL, " +
-                "item_type VARCHAR(20) NOT NULL, " +
-                "slot VARCHAR(20) DEFAULT 'none', " +
-                "name VARCHAR(50), " +
-                "quantity INT DEFAULT 1, " +
-                "level INT DEFAULT 0, " +
-                "attack INT DEFAULT 0, " +
-                "phys_def INT DEFAULT 0, " +
-                "magic_def INT DEFAULT 0, " +
-                "dodge DOUBLE DEFAULT 0, " +
-                "hp INT DEFAULT 0, " +
-                "item_desc VARCHAR(200), " +
-                "UNIQUE KEY uk_ili_user_item (username, item_key)" +
-                ") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci");
-            log.info("idle_life_items 表已就绪");
         } catch (Exception e) {
             log.warn("数据库表初始化警告（可能已存在）: {}", e.getMessage());
         }

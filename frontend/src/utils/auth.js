@@ -36,13 +36,6 @@ export function getRole() {
 }
 
 /**
- * 是否管理员
- */
-export function isAdmin() {
-  return getRole() === 'ADMIN'
-}
-
-/**
  * 带自动刷新 Token 的 fetch 封装
  */
 export async function authFetch(url, options = {}) {

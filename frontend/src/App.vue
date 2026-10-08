@@ -10,13 +10,8 @@
         </button>
         <div class="nav-links" :class="{ open: menuOpen }">
           <router-link to="/" @click="menuOpen = false">首页</router-link>
-          <router-link to="/snake" @click="menuOpen = false">🐍 贪吃蛇</router-link>
           <router-link to="/gomoku" @click="menuOpen = false">♟ 五子棋</router-link>
-          <router-link to="/game24" @click="menuOpen = false">🃏 24点</router-link>
-          <router-link to="/autochess" @click="menuOpen = false">♟ 自走棋</router-link>
-          <router-link to="/idle-life" @click="menuOpen = false">⚔️ 挂机生活</router-link>
           <template v-if="loggedIn">
-            <router-link v-if="admin" to="/admin" @click="menuOpen = false" class="nav-admin">管理</router-link>
             <span class="nav-user">{{ username }}</span>
             <a href="#" class="nav-logout" @click.prevent="doLogout">退出</a>
           </template>
@@ -41,7 +36,7 @@
 </template>
 
 <script>
-import { isLoggedIn, getUsername, isAdmin, logout } from '@/utils/auth'
+import { isLoggedIn, getUsername, logout } from '@/utils/auth'
 
 const VISITED_KEY = 'chycal_visited'
 
@@ -52,8 +47,7 @@ export default {
       visitorStats: null,
       menuOpen: false,
       loggedIn: isLoggedIn(),
-      username: getUsername(),
-      admin: isAdmin()
+      username: getUsername()
     }
   },
   computed: {
@@ -92,7 +86,6 @@ export default {
     onAuthChange() {
       this.loggedIn = isLoggedIn()
       this.username = getUsername()
-      this.admin = isAdmin()
     },
     doLogout() {
       logout()
@@ -202,21 +195,6 @@ export default {
   padding: 6px 8px;
   border-left: 1px solid rgba(255, 255, 255, 0.2);
   margin-left: 8px;
-}
-
-.nav-admin {
-  color: #ffd54f !important;
-  text-decoration: none;
-  padding: 6px 12px;
-  font-size: 13px;
-  border-radius: 6px;
-  transition: background 0.3s, color 0.3s;
-  font-weight: 600;
-}
-
-.nav-admin:hover {
-  background: rgba(255, 215, 0, 0.2) !important;
-  color: #ffeb3b !important;
 }
 
 .nav-logout {

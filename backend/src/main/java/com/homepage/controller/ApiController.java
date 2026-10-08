@@ -62,10 +62,7 @@ public class ApiController {
         Map<String, Object> result = new HashMap<>();
         result.put("projects", new Map[]{
             Map.of("name", "个人首页", "desc", "基于 Spring Boot + Vue3 的个人主页，集成技能展示、项目卡片和实时服务监控", "tech", "Spring Boot, Vue3"),
-            Map.of("name", "五子棋对战", "desc", "多人实时五子棋对战，支持观战、AI 对手、悔棋、求和、重开、评论等功能", "tech", "WebSocket, Vue3, Canvas"),
-            Map.of("name", "贪吃蛇游戏", "desc", "经典贪吃蛇小游戏，支持键盘和触屏操控，含排行榜", "tech", "Vue3, Canvas"),
-            Map.of("name", "24点", "desc", "24点数学游戏，随机四张扑克牌，用加减乘除算出24", "tech", "Vue3, Java"),
-            Map.of("name", "自走棋", "desc", "自走棋自动对战，收集英雄、搭配羁绊、对抗AI", "tech", "Vue3, Java")
+            Map.of("name", "五子棋对战", "desc", "多人实时五子棋对战，支持观战、AI 对手、悔棋、求和、重开、评论等功能", "tech", "WebSocket, Vue3, Canvas")
         });
         return result;
     }
