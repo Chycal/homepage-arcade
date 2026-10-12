@@ -16,6 +16,11 @@ import java.util.LinkedHashMap;
 import java.util.LinkedList;
 import java.util.List;
 import java.util.Map;
+import java.util.Random;
+import java.util.concurrent.Executors;
+import java.util.concurrent.RejectedExecutionException;
+import java.util.concurrent.ScheduledExecutorService;
+import java.util.concurrent.TimeUnit;
 
 /**
  * 拉斯维加斯单房间。
@@ -33,6 +38,14 @@ public class LasVegasRoom {
     private static final int CHAT_LIMIT = 30;
     private static final int MAX_MEMBERS = 5;
 
+    /**
+     * AI 每步之间的停顿（毫秒）。
+     * 不留停顿的话，AI 会在一次广播里把整轮走完，玩家只能看到结果，
+     * 体验上像是「卡了一下」。留一点间隔才能看清它逐颗落子。
+     * 测试里会调成 0，避免等待。
+     */
+    private long aiStepDelayMs = 700;
+
     /** 房间阶段（与引擎的 PLACING/GAME_OVER 区分开） */
     private enum RoomPhase {
         LOBBY, PLAYING, FINISHED
@@ -40,17 +53,26 @@ public class LasVegasRoom {
 
     /** 一名成员（大厅阶段即存在，开局后对应引擎里的一个座位） */
     private static class Member {
-        final String key;          // 客户端标识：登录用户 u:<id>，游客 g:<随机>
-        final Long userId;         // 登录用户的数字 ID，游客为 null
+        final String key;          // 客户端标识：登录用户 u:<id>，游客 g:<随机>，AI ai:<序号>
+        final Long userId;         // 登录用户的数字 ID，游客与 AI 为 null
         final String username;
-        WebSocketSession session;
+        final boolean ai;          // 是否为电脑对手
+        final LasVegasAi.Style aiStyle;
+        WebSocketSession session;  // AI 没有连接，恒为 null
         boolean connected = true;
 
         Member(String key, Long userId, String username, WebSocketSession session) {
+            this(key, userId, username, session, false, null);
+        }
+
+        Member(String key, Long userId, String username, WebSocketSession session,
+               boolean ai, LasVegasAi.Style aiStyle) {
             this.key = key;
             this.userId = userId;
             this.username = username;
             this.session = session;
+            this.ai = ai;
+            this.aiStyle = aiStyle == null ? LasVegasAi.Style.SOLID : aiStyle;
         }
     }
 
@@ -70,6 +92,15 @@ public class LasVegasRoom {
     private RoomPhase roomPhase = RoomPhase.LOBBY;
     private Long savedMatchId;
 
+    /** AI 的随机源（决策用） */
+    private final Random aiRandom = new Random();
+    /** AI 命名序号 */
+    private int aiSeq = 0;
+    /** 驱动 AI 回合的调度器，按需创建 */
+    private ScheduledExecutorService aiExecutor;
+    /** 是否已有一个待执行的 AI 行动，避免重复排程导致连走两步 */
+    private boolean aiTurnScheduled;
+
     public LasVegasRoom(String roomCode, LasVegasRepository repository, JwtUtil jwtUtil) {
         this.roomCode = roomCode;
         this.repository = repository;
@@ -78,6 +109,11 @@ public class LasVegasRoom {
 
     public String getRoomCode() {
         return roomCode;
+    }
+
+    /** 仅供测试：调整 AI 每步间隔，避免测试里空等 */
+    void setAiStepDelayMs(long delayMs) {
+        this.aiStepDelayMs = Math.max(0, delayMs);
     }
 
     // ------------------------------------------------------------------
@@ -101,6 +137,7 @@ public class LasVegasRoom {
                 if (removed != null) {
                     log.info("[{}] {} 离开大厅", roomCode, removed.username);
                 }
+                pruneAiIfNoHuman();
             } else {
                 // 对局中保留座位以便重连
                 Member member = members.get(key);
@@ -109,16 +146,17 @@ public class LasVegasRoom {
                     member.session = null;
                 }
                 // 若全员掉线，则放弃这局，房间回到大厅，避免死局永久占位
+                // 注意：AI 成员恒为「在线」，这里必须只看真人，否则房间永远等不到回收
                 boolean anyoneOnline = false;
                 for (Member m : members.values()) {
-                    if (m.connected) {
+                    if (m.connected && !m.ai) {
                         anyoneOnline = true;
                         break;
                     }
                 }
                 if (!anyoneOnline) {
                     log.info("[{}] 全员掉线，放弃本局并回到大厅", roomCode);
-                    resetToLobby();
+                    resetToLobby(false);
                 }
             }
             broadcastState();
@@ -127,11 +165,24 @@ public class LasVegasRoom {
 
     /** 清空对局，回到大厅；同时移除已掉线的成员 */
     private void resetToLobby() {
+        resetToLobby(true);
+    }
+
+    /**
+     * 清空对局，回到大厅。
+     *
+     * @param keepAi true 表示保留电脑对手（房主点「再来一局」时希望原班人马重开）；
+     *               false 表示连 AI 一起清掉（真人全部掉线、房间已无人时没有留着的意义）
+     */
+    private void resetToLobby(boolean keepAi) {
         game = null;
         seatOrder.clear();
         roomPhase = RoomPhase.LOBBY;
         savedMatchId = null;
-        members.entrySet().removeIf(e -> !e.getValue().connected);
+        aiTurnScheduled = false;
+        cancelAiExecutor();
+        members.entrySet().removeIf(e -> !e.getValue().connected || (e.getValue().ai && !keepAi));
+        renumberAi();
     }
 
     public void handleMessage(WebSocketSession session, String payload) {
@@ -166,6 +217,12 @@ public class LasVegasRoom {
                     break;
                 case "restart":
                     onRestart(session);
+                    break;
+                case "add_ai":
+                    onAddAi(session, message);
+                    break;
+                case "remove_ai":
+                    onRemoveAi(session, message);
                     break;
                 case "chat":
                     onChat(session, message);
@@ -263,6 +320,7 @@ public class LasVegasRoom {
             } else {
                 members.remove(key);
                 sessionToKey.remove(session.getId());
+                pruneAiIfNoHuman();
             }
             broadcastState();
         }
@@ -300,6 +358,7 @@ public class LasVegasRoom {
             savedMatchId = null;
             log.info("[{}] 对局开始，{} 名玩家", roomCode, ids.size());
             broadcastState();
+            scheduleAiTurn();
         }
     }
 
@@ -332,6 +391,8 @@ public class LasVegasRoom {
                 persistResult();
             }
             broadcastState();
+            // 一轮结束后会轮到下一轮的先手，可能正好是 AI
+            scheduleAiTurn();
         }
     }
 
@@ -352,8 +413,200 @@ public class LasVegasRoom {
         }
     }
 
-    private void onChat(WebSocketSession session, Map<String, Object> message) {
+    // ------------------------------------------------------------------
+    // 电脑对手（AI）
+    // ------------------------------------------------------------------
+
+    /**
+     * 房主添加一个电脑对手。
+     *
+     * 可选 {@code style}: solid / bold / wild，缺省 solid。
+     * 仅在未开局时可用；AI 与真人一样占一个座位，同样受 5 人上限约束。
+     */
+    private void onAddAi(WebSocketSession session, Map<String, Object> message) {
         synchronized (this) {
+            String key = sessionToKey.get(session.getId());
+            if (key == null) {
+                sendError(session, "请先加入房间");
+                return;
+            }
+            if (!isHost(key)) {
+                sendError(session, "只有房主可以添加电脑对手");
+                return;
+            }
+            if (roomPhase != RoomPhase.LOBBY) {
+                sendError(session, "对局已开始，不能再添加电脑对手");
+                return;
+            }
+            if (members.size() >= MAX_MEMBERS) {
+                sendError(session, "房间已满（最多 " + MAX_MEMBERS + " 人）");
+                return;
+            }
+            LasVegasAi.Style style = LasVegasAi.Style.of(str(message.get("style")));
+            aiSeq++;
+            String aiKey = "ai:" + aiSeq;
+            String aiName = "电脑" + aiSeq + "（" + style.getLabel() + "）";
+            // AI 没有 WebSocket 连接，session 恒为 null；safeSend/broadcastState 会跳过它
+            members.put(aiKey, new Member(aiKey, null, aiName, null, true, style));
+            log.info("[{}] 添加电脑对手 {}（共 {} 人）", roomCode, aiName, members.size());
+            broadcastState();
+        }
+    }
+
+    /** 房主移除一个电脑对手（只能移除 AI，不能移除真人） */
+    private void onRemoveAi(WebSocketSession session, Map<String, Object> message) {
+        synchronized (this) {
+            String key = sessionToKey.get(session.getId());
+            if (key == null) {
+                sendError(session, "请先加入房间");
+                return;
+            }
+            if (!isHost(key)) {
+                sendError(session, "只有房主可以移除电脑对手");
+                return;
+            }
+            if (roomPhase != RoomPhase.LOBBY) {
+                sendError(session, "对局已开始，不能移除电脑对手");
+                return;
+            }
+            String target = str(message.get("key"));
+            Member member = target == null ? null : members.get(target);
+            if (member == null || !member.ai) {
+                sendError(session, "找不到该电脑对手");
+                return;
+            }
+            members.remove(target);
+            renumberAi();
+            log.info("[{}] 移除电脑对手 {}", roomCode, member.username);
+            broadcastState();
+        }
+    }
+
+    /** 重排 AI 名字，保证编号连续（电脑1、电脑2…）。就地替换，保持大厅显示顺序不变。 */
+    private void renumberAi() {
+        int seq = 0;
+        for (Map.Entry<String, Member> entry : new ArrayList<>(members.entrySet())) {
+            Member member = entry.getValue();
+            if (!member.ai) {
+                continue;
+            }
+            seq++;
+            String name = "电脑" + seq + "（" + member.aiStyle.getLabel() + "）";
+            if (!name.equals(member.username)) {
+                // key 已存在，put 不会改变 LinkedHashMap 的顺序
+                members.put(entry.getKey(),
+                        new Member(member.key, null, name, null, true, member.aiStyle));
+            }
+        }
+        aiSeq = seq;
+    }
+
+    /**
+     * 大厅里如果已经没有真人，就把电脑对手一并清掉。
+     *
+     * 否则 AI 会永远占着房间：真人全走光后房间既不空、也没人能操作，
+     * 而这些「永远在线」的成员又会让「全员掉线」的回收逻辑失效。
+     */
+    private void pruneAiIfNoHuman() {
+        for (Member member : members.values()) {
+            if (!member.ai) {
+                return;
+            }
+        }
+        if (!members.isEmpty()) {
+            log.info("[{}] 大厅已无真人，清空电脑对手", roomCode);
+            members.clear();
+        }
+        aiSeq = 0;
+    }
+
+    // ------------------------------------------------------------------
+    // AI 回合驱动
+    // ------------------------------------------------------------------
+
+    /**
+     * 若当前轮到 AI，则排程它的行动。
+     *
+     * 每次状态变化（开局、落子、重开）后都要调用，AI 才会接着走。
+     * 用 {@code aiTurnScheduled} 防止重复排程导致 AI 连走两步。
+     */
+    private void scheduleAiTurn() {
+        if (roomPhase != RoomPhase.PLAYING || game == null || game.isOver()) {
+            return;
+        }
+        if (aiTurnScheduled) {
+            return;
+        }
+        String currentKey = game.getCurrentPlayerId();
+        Member current = currentKey == null ? null : members.get(currentKey);
+        if (current == null || !current.ai) {
+            return;
+        }
+        aiTurnScheduled = true;
+        try {
+            aiExecutor().schedule(this::runAiTurn, aiStepDelayMs, TimeUnit.MILLISECONDS);
+        } catch (RejectedExecutionException e) {
+            // 房间正在回收，忽略即可
+            aiTurnScheduled = false;
+        }
+    }
+
+    /** 在调度线程上执行一次 AI 行动 */
+    private void runAiTurn() {
+        synchronized (this) {
+            aiTurnScheduled = false;
+            if (roomPhase != RoomPhase.PLAYING || game == null || game.isOver()) {
+                return;
+            }
+            String currentKey = game.getCurrentPlayerId();
+            Member current = currentKey == null ? null : members.get(currentKey);
+            if (current == null || !current.ai) {
+                return;
+            }
+            try {
+                if (!game.hasRolled()) {
+                    game.roll();
+                } else {
+                    int value = LasVegasAi.chooseValue(game, game.getLastRoll(),
+                            current.aiStyle, aiRandom);
+                    game.choose(value);
+                    if (game.isOver()) {
+                        roomPhase = RoomPhase.FINISHED;
+                        persistResult();
+                    }
+                }
+            } catch (IllegalArgumentException | IllegalStateException e) {
+                // 引擎拒绝（例如房间刚被重置）：放弃这步，避免调度器里抛出异常
+                log.warn("[{}] AI 行动被拒绝: {}", roomCode, e.getMessage());
+                return;
+            } catch (Exception e) {
+                log.warn("[{}] AI 行动失败: {}", roomCode, e.toString());
+                return;
+            }
+            broadcastState();
+            scheduleAiTurn();
+        }
+    }
+
+    private ScheduledExecutorService aiExecutor() {
+        if (aiExecutor == null || aiExecutor.isShutdown()) {
+            aiExecutor = Executors.newSingleThreadScheduledExecutor(r -> {
+                Thread t = new Thread(r, "lasvegas-ai-" + roomCode);
+                t.setDaemon(true);
+                return t;
+            });
+        }
+        return aiExecutor;
+    }
+
+    private void cancelAiExecutor() {
+        if (aiExecutor != null) {
+            aiExecutor.shutdownNow();
+            aiExecutor = null;
+        }
+    }
+
+    private void onChat(WebSocketSession session, Map<String, Object> message) {        synchronized (this) {
             String key = sessionToKey.get(session.getId());
             Member member = key == null ? null : members.get(key);
             if (member == null) {
@@ -396,10 +649,10 @@ public class LasVegasRoom {
         return key;
     }
 
-    /** 房主 = 仍在线的成员中最早加入者；掉线者不会长期占据房主 */
+    /** 房主 = 仍在线的「真人」成员中最早加入者；AI 与掉线者都不会成为房主 */
     private String hostKey() {
         for (Member member : members.values()) {
-            if (member.connected) {
+            if (member.connected && !member.ai) {
                 return member.key;
             }
         }
@@ -482,6 +735,10 @@ public class LasVegasRoom {
                     && members.size() >= LasVegasGame.MIN_PLAYERS);
             payload.put("minPlayers", LasVegasGame.MIN_PLAYERS);
             payload.put("maxPlayers", LasVegasGame.MAX_PLAYERS);
+            // 房主可添加电脑对手；前端据此显示按钮
+            payload.put("canAddAi", key != null && isHost(key) && members.size() < MAX_MEMBERS);
+            payload.put("canRemoveAi", key != null && isHost(key));
+            payload.put("aiStyles", aiStyleOptions());
             payload.put("yourRoll", Collections.emptyList());
             payload.put("options", Collections.emptyMap());
             payload.put("canRoll", false);
@@ -524,6 +781,18 @@ public class LasVegasRoom {
         safeSend(session, payload);
     }
 
+    /** 可选电脑性格（名称 + 中文标签），供前端下拉框使用 */
+    private List<Map<String, Object>> aiStyleOptions() {
+        List<Map<String, Object>> list = new ArrayList<>();
+        for (LasVegasAi.Style style : LasVegasAi.Style.values()) {
+            Map<String, Object> entry = new LinkedHashMap<>();
+            entry.put("value", style.name());
+            entry.put("label", style.getLabel());
+            list.add(entry);
+        }
+        return list;
+    }
+
     private List<Map<String, Object>> lobbyPlayers() {
         List<Map<String, Object>> list = new ArrayList<>();
         String host = hostKey();
@@ -535,6 +804,11 @@ public class LasVegasRoom {
             entry.put("seat", seat++);
             entry.put("connected", member.connected);
             entry.put("isHost", member.key.equals(host));
+            entry.put("ai", member.ai);
+            if (member.ai) {
+                entry.put("aiStyle", member.aiStyle.name());
+                entry.put("aiStyleLabel", member.aiStyle.getLabel());
+            }
             list.add(entry);
         }
         return list;
@@ -550,6 +824,7 @@ public class LasVegasRoom {
             entry.put("username", member != null ? member.username : key);
             entry.put("seat", player.getSeat());
             entry.put("connected", member != null && member.connected);
+            entry.put("ai", member != null && member.ai);
             entry.put("diceLeft", player.getDiceLeft());
             entry.put("money", player.getMoney());
             entry.put("banknotes", player.getBanknoteCount());

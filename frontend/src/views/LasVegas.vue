@@ -34,12 +34,19 @@
       <div v-if="phase === 'LOBBY'" class="lv-card lv-lobby">
         <h2>玩家列表（{{ players.length }} / {{ state.maxPlayers || 5 }}）</h2>
         <ul class="lv-players">
-          <li v-for="p in players" :key="p.key" :class="{ me: p.key === state.you }">
+          <li v-for="p in players" :key="p.key" :class="{ me: p.key === state.you, ai: p.ai }">
             <span class="lv-dot" :style="{ background: diceColor(p.seat) }"></span>
             <span class="lv-name">{{ p.username }}</span>
             <span v-if="p.isHost" class="lv-badge">房主</span>
+            <span v-if="p.ai" class="lv-badge ai-badge">🤖 {{ p.aiStyleLabel || '电脑' }}</span>
             <span v-if="p.key === state.you" class="lv-badge me-badge">我</span>
             <span v-if="!p.connected" class="lv-offline">掉线</span>
+            <button
+              v-if="p.ai && state.canRemoveAi"
+              class="lv-remove-ai"
+              title="移除这个电脑对手"
+              @click="removeAi(p.key)"
+            >✕</button>
           </li>
         </ul>
 
@@ -47,6 +54,21 @@
           至少 {{ state.minPlayers || 2 }} 人开始。规则：轮到你时掷出全部剩余骰子，
           必须选择<b>一个</b>点数，把该点数的<b>全部</b>骰子放进对应赌场。
           <router-link to="/las-vegas/rules" class="lv-inline-link">看完整规则 →</router-link>
+        </p>
+
+        <!-- 房主：添加电脑对手 -->
+        <div v-if="state.canAddAi" class="lv-add-ai">
+          <span class="lv-add-ai-label">添加电脑对手</span>
+          <select v-model="aiStyle" class="lv-select">
+            <option v-for="s in aiStyles" :key="s.value" :value="s.value">{{ s.label }}</option>
+          </select>
+          <button class="lv-btn ghost small" @click="addAi">＋ 添加</button>
+        </div>
+        <p v-else-if="state.isHost && phase === 'LOBBY'" class="lv-add-ai-full">
+          房间已满（{{ state.maxPlayers || 5 }} 人），无法再添加电脑对手。
+        </p>
+        <p v-else-if="phase === 'LOBBY' && !state.isHost" class="lv-add-ai-full">
+          房主可以添加电脑对手陪你玩。
         </p>
 
         <div class="lv-actions">
@@ -135,6 +157,7 @@
             <div v-for="p in players" :key="p.key" class="lv-standing-row">
               <span class="lv-dot" :style="{ background: diceColor(p.seat) }"></span>
               <span class="lv-name">{{ p.username }}</span>
+              <span v-if="p.ai" class="lv-badge ai-badge">电脑</span>
               <span class="lv-standing-money">${{ money(p.money) }}</span>
               <span class="lv-standing-notes">{{ p.banknotes }} 张</span>
             </div>
@@ -287,7 +310,8 @@ export default {
       stats: {},
       loadingMatches: false,
       expanded: [],
-      reconnectTimer: null
+      reconnectTimer: null,
+      aiStyle: 'SOLID'
     }
   },
   computed: {
@@ -296,6 +320,14 @@ export default {
     },
     players() {
       return this.state.players || []
+    },
+    aiStyles() {
+      // 后端下发可选项；未收到时给一份兜底，保证大厅不出现空下拉框
+      return this.state.aiStyles || [
+        { value: 'SOLID', label: '稳健' },
+        { value: 'BOLD', label: '激进' },
+        { value: 'WILD', label: '赌徒' }
+      ]
     },
     casinos() {
       return this.state.casinos || []
@@ -421,6 +453,12 @@ export default {
     },
     leave() {
       this.send({ type: 'leave' })
+    },
+    addAi() {
+      this.send({ type: 'add_ai', style: this.aiStyle })
+    },
+    removeAi(key) {
+      this.send({ type: 'remove_ai', key })
     },
     sendChat() {
       const text = this.chatText.trim()
@@ -621,6 +659,69 @@ export default {
 
 .lv-players li.me {
   background: #f0f0ff;
+}
+
+.lv-players li.ai {
+  background: #f3f7ff;
+}
+
+.lv-badge.ai-badge {
+  background: #e8f0ff;
+  color: #3a5bbf;
+}
+
+.lv-remove-ai {
+  margin-left: auto;
+  border: none;
+  background: transparent;
+  color: #b0b0b0;
+  cursor: pointer;
+  font-size: 13px;
+  line-height: 1;
+  padding: 2px 6px;
+  border-radius: 6px;
+}
+
+.lv-remove-ai:hover {
+  background: #ffecec;
+  color: #f44336;
+}
+
+.lv-add-ai {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin: 0 0 14px;
+  padding: 10px 12px;
+  background: #f3f7ff;
+  border: 1px dashed #c9d8f7;
+  border-radius: 10px;
+}
+
+.lv-add-ai-label {
+  font-size: 13px;
+  color: #555;
+}
+
+.lv-add-ai-full {
+  font-size: 13px;
+  color: #999;
+  margin: 0 0 14px;
+}
+
+.lv-select {
+  padding: 5px 8px;
+  border: 1px solid #d5d9e6;
+  border-radius: 8px;
+  background: #fff;
+  font-size: 13px;
+  color: #333;
+}
+
+.lv-btn.small {
+  padding: 5px 12px;
+  font-size: 13px;
 }
 
 .lv-dot {

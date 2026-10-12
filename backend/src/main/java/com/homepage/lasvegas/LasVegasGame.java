@@ -22,7 +22,9 @@ import java.util.concurrent.ThreadLocalRandom;
  *  - 结算：同一点数骰子数相同的玩家「全部作废」；其余按骰子数降序领面额从高到低的钞票。
  *  - 胜负：钱最多者胜；平手比钞票张数；再平手则并列胜利。
  *
- * 未实现（按需求确认）：AI 对手、中立骰变体（2-4 人官方变体）。
+ * 未实现（按需求确认）：中立骰变体（2-4 人官方变体）。
+ *
+ * AI 对手由 {@link LasVegasAi} 提供决策逻辑，{@link LasVegasRoom} 负责驱动其自动行动。
  */
 public class LasVegasGame {
 

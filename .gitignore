@@ -12,6 +12,7 @@ application-local.yml
 
 # å·¥å…·ä¸æœ¬åœ°æ–‡ä»¶
 .codebuddy/
+.scratch/
 .remote-ssh.json
 .DS_Store
 Thumbs.db
@@ -19,3 +20,6 @@ Thumbs.db
 # æœ¬åœ°å¤‡ä»½ä¸æ‰“åŒ…äº§ç‰©ï¼ˆå«æ•°æ®åº“å¯¼å‡ºï¼Œä¸å…¥åº“ï¼‰
 backup/
 bundle/
+
+# AI »ù×¼²âÊÔ½ÅÊÖ¼Ü£¨Ò»´ÎĞÔÑ¹²âÓÃ£¬·Ç¹¹½¨²úÎï£©
+backend/target-ai-bench/
