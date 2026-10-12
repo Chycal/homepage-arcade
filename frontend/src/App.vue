@@ -11,6 +11,7 @@
         <div class="nav-links" :class="{ open: menuOpen }">
           <router-link to="/" @click="menuOpen = false">首页</router-link>
           <router-link to="/gomoku" @click="menuOpen = false">♟ 五子棋</router-link>
+          <router-link to="/las-vegas" @click="menuOpen = false">🎲 拉斯维加斯</router-link>
           <template v-if="loggedIn">
             <span class="nav-user">{{ username }}</span>
             <a href="#" class="nav-logout" @click.prevent="doLogout">退出</a>

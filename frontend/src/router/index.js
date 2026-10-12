@@ -20,6 +20,12 @@ const routes = [
     name: 'Gomoku',
     component: () => import('@/views/Gomoku.vue'),
     meta: { title: '五子棋 - chycal' }
+  },
+  {
+    path: '/las-vegas',
+    name: 'LasVegas',
+    component: () => import('@/views/LasVegas.vue'),
+    meta: { title: '拉斯维加斯 - chycal' }
   }
 ]
 

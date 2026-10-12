@@ -96,6 +96,34 @@ public class DataInitializer implements CommandLineRunner {
                 "KEY idx_visitor_ip (ip)" +
                 ") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci");
             log.info("visitor_log 表已就绪");
+
+            // 拉斯维加斯对局表
+            jdbc.execute("CREATE TABLE IF NOT EXISTS lasvegas_match (" +
+                "id BIGINT AUTO_INCREMENT PRIMARY KEY, " +
+                "room_code VARCHAR(32) NOT NULL DEFAULT 'default', " +
+                "player_count INT NOT NULL, " +
+                "rounds INT NOT NULL DEFAULT 4, " +
+                "winner_ids VARCHAR(255) DEFAULT NULL, " +
+                "started_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP, " +
+                "finished_at DATETIME NULL, " +
+                "KEY idx_lv_match_room (room_code)" +
+                ") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci");
+            log.info("lasvegas_match 表已就绪");
+
+            // 拉斯维加斯玩家成绩表
+            jdbc.execute("CREATE TABLE IF NOT EXISTS lasvegas_player (" +
+                "id BIGINT AUTO_INCREMENT PRIMARY KEY, " +
+                "match_id BIGINT NOT NULL, " +
+                "user_id BIGINT NULL, " +
+                "username VARCHAR(50) NOT NULL, " +
+                "seat INT NOT NULL, " +
+                "money INT NOT NULL DEFAULT 0, " +
+                "banknotes INT NOT NULL DEFAULT 0, " +
+                "is_winner TINYINT(1) NOT NULL DEFAULT 0, " +
+                "KEY idx_lv_player_match (match_id), " +
+                "KEY idx_lv_player_user (user_id)" +
+                ") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci");
+            log.info("lasvegas_player 表已就绪");
         } catch (Exception e) {
             log.warn("数据库表初始化警告（可能已存在）: {}", e.getMessage());
         }

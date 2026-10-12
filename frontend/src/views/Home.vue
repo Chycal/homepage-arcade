@@ -11,6 +11,9 @@
           <router-link to="/gomoku" class="btn-contact btn-game">
             ♟ 五子棋
           </router-link>
+          <router-link to="/las-vegas" class="btn-contact btn-game">
+            🎲 拉斯维加斯
+          </router-link>
           <a v-if="profile.email" :href="'mailto:' + profile.email" class="btn-contact">
             📧 Email
           </a>
