@@ -26,6 +26,12 @@ const routes = [
     name: 'LasVegas',
     component: () => import('@/views/LasVegas.vue'),
     meta: { title: '拉斯维加斯 - chycal' }
+  },
+  {
+    path: '/las-vegas/rules',
+    name: 'LasVegasRules',
+    component: () => import('@/views/LasVegasRulesPage.vue'),
+    meta: { title: '拉斯维加斯规则 - chycal' }
   }
 ]
 

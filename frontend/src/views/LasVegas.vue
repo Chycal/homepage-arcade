@@ -14,6 +14,9 @@
                 @click="switchToRecord">
           战绩表
         </button>
+        <button :class="['lv-tab', { active: tab === 'rules' }]" @click="tab = 'rules'">
+          📖 规则
+        </button>
       </div>
     </header>
 
@@ -43,6 +46,7 @@
         <p class="lv-hint">
           至少 {{ state.minPlayers || 2 }} 人开始。规则：轮到你时掷出全部剩余骰子，
           必须选择<b>一个</b>点数，把该点数的<b>全部</b>骰子放进对应赌场。
+          <router-link to="/las-vegas/rules" class="lv-inline-link">看完整规则 →</router-link>
         </p>
 
         <div class="lv-actions">
@@ -102,7 +106,10 @@
             </button>
 
             <template v-if="state.canChoose">
-              <p class="lv-hint">本次掷出：{{ (state.yourRoll || []).join('、') }}。请选择要放入赌场的点数：</p>
+              <p class="lv-hint">
+                本次掷出：{{ (state.yourRoll || []).join('、') }}。请选择要放入赌场的点数：
+                <span class="lv-tip">选中的点数会把该点数的<b>全部</b>骰子一起放进去，不能只放一部分。</span>
+              </p>
               <div class="lv-options">
                 <button v-for="o in options" :key="o.value" class="lv-option" @click="choose(o.value)">
                   <span class="lv-option-value">{{ o.value }}</span>
@@ -174,7 +181,7 @@
     </section>
 
     <!-- ===================== 战绩表 ===================== -->
-    <section v-else class="lv-record">
+    <section v-else-if="tab === 'record'" class="lv-record">
       <div v-if="!loggedIn" class="lv-card">
         <p class="lv-hint">战绩表仅对参与过对局的登录玩家可见。</p>
         <router-link to="/login" class="lv-btn primary">去登录</router-link>
@@ -237,11 +244,20 @@
         </div>
       </template>
     </section>
+
+    <!-- ===================== 规则 ===================== -->
+    <section v-else class="lv-rules">
+      <LasVegasRules />
+      <p class="lv-rules-link">
+        想单独打开这一页分享给别人？<router-link to="/las-vegas/rules">规则页链接</router-link>
+      </p>
+    </section>
   </div>
 </template>
 
 <script>
 import { isLoggedIn, getAccessToken, getUsername, authFetch } from '@/utils/auth'
+import LasVegasRules from '@/components/LasVegasRules.vue'
 
 const DICE_COLORS = ['#e53935', '#1e88e5', '#43a047', '#fb8c00', '#8e24aa']
 const CASINO_NAMES = {
@@ -255,6 +271,7 @@ const CASINO_NAMES = {
 
 export default {
   name: 'LasVegas',
+  components: { LasVegasRules },
   data() {
     return {
       ws: null,
@@ -1040,5 +1057,36 @@ export default {
   color: #999;
   width: 50px;
   text-align: right;
+}
+
+.lv-rules-link {
+  text-align: center;
+  font-size: 12px;
+  color: #999;
+  margin: 16px 0 0;
+}
+
+.lv-rules-link a {
+  color: #667eea;
+}
+
+.lv-inline-link {
+  color: #667eea;
+  text-decoration: none;
+  white-space: nowrap;
+}
+
+.lv-inline-link:hover {
+  text-decoration: underline;
+}
+
+.lv-tip {
+  display: block;
+  font-size: 12px;
+  color: #8a6d3b;
+  background: #fcf8e3;
+  border-radius: 6px;
+  padding: 5px 9px;
+  margin-top: 6px;
 }
 </style>
