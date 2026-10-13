@@ -386,6 +386,266 @@ class LasVegasRoomAiTest {
     }
 
     @Nested
+    @DisplayName("观战：任何进入网页的人都能看到对局")
+    class Spectating {
+
+        @Test
+        @DisplayName("未加入的人也能持续收到房间状态，并被标记为观战者")
+        void everyoneCanWatch() throws Exception {
+            Client host = join("host");
+            Client guest = join("guest");
+            Client watcher = spectate("watcher");
+
+            Map<String, Object> state = watcher.state();
+            assertThat(state.get("spectator")).isEqualTo(true);
+            assertThat(state.get("you")).isNull();
+            assertThat(state.get("isHost")).isEqualTo(false);
+            // 观战者看得到房间里的玩家，但自己不在名单里
+            assertThat(watcher.players()).hasSize(2);
+            assertThat(watcher.players())
+                    .noneSatisfy(p -> assertThat(p.get("key")).isEqualTo(state.get("you")));
+            assertThat(((Number) state.get("spectatorCount")).intValue()).isEqualTo(1);
+
+            // 玩家列表变化时观战者也会同步收到
+            addAi(host);
+            assertThat(watcher.players()).hasSize(3);
+        }
+
+        @Test
+        @DisplayName("观战者不能开始对局、投骰、选点数，也不能增删电脑对手")
+        void spectatorCannotAct() throws Exception {
+            Client host = join("host");
+            Client guest = join("guest");
+            Client watcher = spectate("watcher");
+            send(host, "{\"type\":\"start\"}");
+            assertThat(host.state().get("phase")).isEqualTo("PLAYING");
+
+            send(watcher, "{\"type\":\"roll\"}");
+            assertThat(watcher.lastError()).contains("请先加入房间");
+
+            send(watcher, "{\"type\":\"choose\",\"value\":3}");
+            assertThat(watcher.lastError()).contains("请先加入房间");
+
+            send(watcher, "{\"type\":\"add_ai\"}");
+            assertThat(watcher.lastError()).contains("请先加入房间");
+
+            send(watcher, "{\"type\":\"remove_ai\",\"key\":\"ai:1\"}");
+            assertThat(watcher.lastError()).contains("请先加入房间");
+
+            // 观战者没有座位，也不会因为上面的请求被塞进对局
+            assertThat(watcher.players()).hasSize(2);
+            assertThat(watcher.state().get("canRoll")).isEqualTo(false);
+            assertThat(watcher.state().get("canChoose")).isEqualTo(false);
+        }
+
+        @Test
+        @DisplayName("观战者不能冒充房主开始对局")
+        void spectatorCannotStart() throws Exception {
+            Client host = join("host");
+            Client guest = join("guest");
+            Client watcher = spectate("watcher");
+
+            send(watcher, "{\"type\":\"start\"}");
+            assertThat(watcher.lastError()).contains("请先加入房间");
+            assertThat(host.state().get("phase")).isEqualTo("LOBBY");
+        }
+
+        @Test
+        @DisplayName("对局开始后进入的人自动转为观战，不会顶掉座位")
+        void lateJoinerBecomesSpectator() throws Exception {
+            Client host = join("host");
+            Client guest = join("guest");
+            send(host, "{\"type\":\"start\"}");
+            assertThat(host.state().get("phase")).isEqualTo("PLAYING");
+
+            // 对局进行中不带 spectate 标记直接 join → 必须降级为观战
+            Client late = join("late");
+            assertThat(late.state().get("spectator")).isEqualTo(true);
+            assertThat(late.state().get("you")).isNull();
+            assertThat(late.players()).hasSize(2);
+            assertThat(host.state().get("phase")).isEqualTo("PLAYING");
+        }
+
+        @Test
+        @DisplayName("大厅满员后进入的人也转为观战，而不是被拒绝")
+        void fullLobbyFallsBackToSpectating() throws Exception {
+            Client host = join("host");
+            for (int i = 0; i < 4; i++) {
+                addAi(host);
+            }
+            assertThat(host.players()).hasSize(5);
+
+            Client extra = join("extra");
+            assertThat(extra.state().get("spectator")).isEqualTo(true);
+            assertThat(extra.players()).hasSize(5);
+            // 满员时不再提供入座入口
+            assertThat(extra.state().get("canJoin")).isEqualTo(false);
+        }
+
+        @Test
+        @DisplayName("观战者在大厅且未满员时可以选择入座")
+        void spectatorCanTakeASeatInLobby() throws Exception {
+            Client host = join("host");
+            Client watcher = spectate("watcher");
+            assertThat(watcher.state().get("spectator")).isEqualTo(true);
+            assertThat(watcher.state().get("canJoin")).isEqualTo(true);
+
+            // 再发一次不带 spectate 的 join → 正式入座
+            send(watcher, "{\"type\":\"join\",\"guestId\":\"watcher\",\"username\":\"watcher\"}");
+
+            Map<String, Object> state = watcher.state();
+            assertThat(state.get("spectator")).isEqualTo(false);
+            assertThat(state.get("you")).isNotNull();
+            assertThat(state.get("canJoin")).isEqualTo(false);
+            assertThat(watcher.players()).hasSize(2);
+            assertThat(host.state().get("canStart")).isEqualTo(true);
+        }
+
+        @Test
+        @DisplayName("当前投骰玩家掷出的点数对所有人公开，但候选点数只给本人")
+        void currentRollIsPublic() throws Exception {
+            Client host = join("host");
+            Client guest = join("guest");
+            send(host, "{\"type\":\"start\"}");
+
+            // 找出轮到谁，让他掷骰
+            Client roller = Boolean.TRUE.equals(host.state().get("canRoll")) ? host : guest;
+            Client other = roller == host ? guest : host;
+            send(roller, "{\"type\":\"roll\"}");
+
+            List<?> roll = (List<?>) roller.state().get("yourRoll");
+            assertThat(roll).isNotEmpty();
+
+            // 同桌的对手看得到同一份点数
+            assertThat((List<?>) other.state().get("currentRoll")).isEqualTo(roll);
+
+            // 观战者同样看得到
+            Client watcher = spectate("watcher");
+            assertThat((List<?>) watcher.state().get("currentRoll")).isEqualTo(roll);
+            // 但候选点数与操作权限只属于当前玩家
+            assertThat(watcher.state().get("options")).isEqualTo(Collections.emptyMap());
+            assertThat(watcher.state().get("canRoll")).isEqualTo(false);
+            assertThat(watcher.state().get("canChoose")).isEqualTo(false);
+            assertThat((List<?>) watcher.state().get("yourRoll")).isEmpty();
+        }
+
+        @Test
+        @DisplayName("离开房间后立刻收到新状态，不再显示自己还在房间里")
+        void leavingUpdatesOwnViewImmediately() throws Exception {
+            Client host = join("host");
+            Client guest = join("guest");
+
+            send(host, "{\"type\":\"leave\"}");
+
+            // 离开者本人必须收到一份「我不在房间里了」的状态
+            Map<String, Object> own = host.state();
+            assertThat(own.get("you")).isNull();
+            assertThat(own.get("isHost")).isEqualTo(false);
+            assertThat(own.get("canStart")).isEqualTo(false);
+            assertThat(own.get("spectator")).isEqualTo(true);
+            assertThat(host.players()).hasSize(1);
+
+            // 房间里的人也立刻看到人走了
+            assertThat(guest.players()).hasSize(1);
+            assertThat(guest.state().get("isHost")).isEqualTo(true);
+        }
+
+        @Test
+        @DisplayName("观战者可以聊天，消息会标记为观众发言")
+        void spectatorCanChat() throws Exception {
+            Client host = join("host");
+            Client watcher = spectate("watcher");
+
+            send(watcher, "{\"type\":\"chat\",\"text\":\"打得不错\"}");
+
+            assertThat(watcher.lastError()).isNull();
+            List<Map<String, Object>> chat = chatOf(host.state());
+            assertThat(chat).isNotEmpty();
+            Map<String, Object> last = chat.get(chat.size() - 1);
+            assertThat(last.get("text")).isEqualTo("打得不错");
+            assertThat(last.get("spectator")).isEqualTo(true);
+        }
+
+        @Test
+        @DisplayName("真人中途退出后座位交给托管，剩下的玩家不会被卡住")
+        void leavingMidGameHandsSeatToAutopilot() throws Exception {
+            Client host = join("host");
+            Client guest = join("guest");
+            send(host, "{\"type\":\"start\"}");
+
+            // guest 退出：座位必须被托管接手，否则 host 会永远等不到轮次推进
+            send(guest, "{\"type\":\"leave\"}");
+
+            Map<String, Object> state = host.state();
+            assertThat(state.get("phase")).isEqualTo("PLAYING");
+            Map<String, Object> seat = host.players().stream()
+                    .filter(p -> Boolean.TRUE.equals(p.get("autopilot")))
+                    .findFirst().orElseThrow();
+            assertThat(seat.get("username")).isEqualTo("guest");
+            assertThat(seat.get("ai")).isEqualTo(false); // 原本是真人，不是房主加的 AI
+
+            // 托管会自己把对局打完，host 也仍能正常行动
+            playUntilFinished(host);
+            assertThat(host.state().get("phase")).isEqualTo("FINISHED");
+        }
+
+        @Test
+        @DisplayName("掉线也交给托管，对局不会停在掉线者身上")
+        void disconnectHandsSeatToAutopilot() throws Exception {
+            Client host = join("host");
+            Client guest = join("guest");
+            send(host, "{\"type\":\"start\"}");
+
+            room.handleDisconnect(guest.session);
+
+            assertThat(host.state().get("phase")).isEqualTo("PLAYING");
+            assertThat(host.players())
+                    .anySatisfy(p -> assertThat(p.get("autopilot")).isEqualTo(true));
+        }
+
+        @Test
+        @DisplayName("每个玩家颜色互不相同，且自己知道自己的颜色")
+        void colorsAreDistinctAndKnown() throws Exception {
+            Client host = join("host");
+            Client guest = join("guest");
+            Client third = join("third");
+
+            List<String> colors = new ArrayList<>();
+            for (Map<String, Object> p : host.players()) {
+                colors.add(String.valueOf(p.get("color")));
+            }
+            assertThat(colors).doesNotHaveDuplicates();
+            assertThat(colors).doesNotContain("null");
+
+            // 自己那一条的颜色就是下发给自己的 yourColor
+            for (Client client : List.of(host, guest, third)) {
+                Map<String, Object> state = client.state();
+                String mine = state.get("you").toString();
+                String myColor = host.players().stream()
+                        .filter(p -> mine.equals(p.get("key")))
+                        .findFirst().orElseThrow().get("color").toString();
+                assertThat(state.get("yourColor")).isEqualTo(myColor);
+                assertThat(state.get("yourColorName")).isNotNull();
+            }
+
+            // 赌场里的骰子也带颜色，前端据此区分归属
+            send(host, "{\"type\":\"start\"}");
+            Client roller = Boolean.TRUE.equals(host.state().get("canRoll")) ? host : guest;
+            send(roller, "{\"type\":\"roll\"}");
+            send(roller, "{\"type\":\"choose\",\"value\":" + greedyValue(roller.state()) + "}");
+
+            int diceSeen = 0;
+            for (Map<String, Object> casino : casinosOf(host.state())) {
+                for (Map<String, Object> die : diceOf(casino)) {
+                    assertThat(die.get("color")).isNotNull();
+                    diceSeen++;
+                }
+            }
+            assertThat(diceSeen).isGreaterThan(0);
+        }
+    }
+
+    @Nested
     @DisplayName("再来一局")
     class Restart {
 
@@ -444,6 +704,32 @@ class LasVegasRoomAiTest {
     // ------------------------------------------------------------------
     // 辅助
     // ------------------------------------------------------------------
+
+    /** 明确以观战身份进入（join 报文带 spectate: true） */
+    private Client spectate(String guestId) throws Exception {
+        Client client = connect(guestId);
+        send(client, "{\"type\":\"join\",\"guestId\":\"" + guestId
+                + "\",\"username\":\"" + guestId + "\",\"spectate\":true}");
+        return client;
+    }
+
+    /** 取出状态里的聊天记录 */
+    @SuppressWarnings("unchecked")
+    private List<Map<String, Object>> chatOf(Map<String, Object> state) {
+        return (List<Map<String, Object>>) state.get("chat");
+    }
+
+    /** 取出状态里的赌场列表 */
+    @SuppressWarnings("unchecked")
+    private List<Map<String, Object>> casinosOf(Map<String, Object> state) {
+        return (List<Map<String, Object>>) state.get("casinos");
+    }
+
+    /** 取出某个赌场里的骰子 */
+    @SuppressWarnings("unchecked")
+    private List<Map<String, Object>> diceOf(Map<String, Object> casino) {
+        return (List<Map<String, Object>>) casino.get("dice");
+    }
 
     /** 用「选骰子最多的点数」把对局推到结束；同时驱动真人的回合 */
     private void playUntilFinished(Client human) throws Exception {

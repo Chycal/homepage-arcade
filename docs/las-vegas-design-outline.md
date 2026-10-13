@@ -414,54 +414,94 @@ for each casino:
 
 ## 14. WebSocket 协议设计
 
-沿用现有 `{"type": "...", ...}` 风格（见 `GameRoom.handleMessage`）。
+> **本节已按实现更新。** 下面的报文是 `LasVegasRoom` 实际收发的格式（早期草案里的
+> `sit` / `ready` / `your_roll` / `placed` / `payout` 等独立消息类型并未采用——
+> 服务端统一推送一份完整的 `room_state`，前端按字段渲染，避免多消息类型不同步）。
 
 ### 14.1 客户端 → 服务端
 
 ```json
-{ "type": "join",   "userId": "chycal" }
-{ "type": "sit",    "seat": 0 }
-{ "type": "ready" }
+{ "type": "join",      "token": "<JWT，可空>", "guestId": "g…", "username": "…", "spectate": false }
+{ "type": "leave" }
 { "type": "start" }
 { "type": "roll" }
-{ "type": "choose", "value": 3 }
-{ "type": "leave" }
-{ "type": "chat",   "text": "..." }
+{ "type": "choose",    "value": 3 }
+{ "type": "restart" }
+{ "type": "add_ai",    "style": "SOLID|BOLD|WILD" }
+{ "type": "remove_ai", "key": "ai:1" }
+{ "type": "chat",      "text": "…" }
+{ "type": "state" }
 ```
+
+`join` 的 `spectate: true` 表示「我只观战，不要座位」。**不带该标记也可能被降级为观战者**：
+对局已开始、或大厅已满员时，服务端不再报错，而是把该连接登记为观战者。
 
 ### 14.2 服务端 → 客户端
 
+只有两种下行消息：`room_state`（全量状态）与 `error`。
+
 ```json
-{ "type": "room_state", "status": "waiting|playing|over",
-  "seats": [ {"seat":0,"user":"chycal","color":0,"money":120000,"banknotes":3,"diceLeft":8}, ... ],
-  "spectators": ["..."], "spectatorCount": 0, "yourSeat": 0 }
+{ "type": "room_state",
+  "roomCode": "default", "phase": "LOBBY|PLAYING|FINISHED",
+  "you": "u:2", "isHost": false,
+  "yourColor": "#1e88e5", "yourColorName": "蓝",
+  "spectator": false, "spectatorCount": 0,
+  "canJoin": false,
+  "players": [ { "key":"u:2", "username":"…", "seat":0,
+                 "color":"#e53935", "colorName":"红",
+                 "connected":true, "isHost":true, "ai":false, "autopilot":false,
+                 "diceLeft":8, "money":120000, "banknotes":3 } ],
+  "casinos": [ { "value":1, "banknotes":[30000,20000], "total":50000,
+                 "dice":[ { "seat":0, "username":"…", "color":"#e53935", "count":4 } ] } ],
+  "round": 2, "totalRounds": 4,
+  "currentPlayerKey": "u:2", "currentPlayerName": "…", "currentPlayerColor": "#e53935",
+  "currentRoll": [3,3,3,5,1,2,6,3],
+  "yourRoll": [], "options": {}, "canRoll": false, "canChoose": false,
+  "lastPayout": [ { "value":1, "voided":[], "awards":[{"seat":0,"note":40000}], "leftover":[10000] } ],
+  "chat": [ { "username":"…", "color":"#e53935", "colorName":"红",
+              "spectator":false, "text":"…" } ],
+  "deckSize": 41, "deckTotal": 1930000,
+  "winners": [ { "key":"u:2", "username":"…", "money":310000, "banknotes":9 } ],
+  "matchId": 31 }
 
-{ "type": "round_start", "round": 2, "startPlayer": 1,
-  "casinos": [ {"dieValue":1,"banknotes":[30000,20000],"total":50000}, ... ] }
-
-{ "type": "your_roll", "dice": [3,3,3,5,1,2,6,3],
-  "options": [ {"value":3,"count":4}, {"value":5,"count":1}, ... ] }
-
-{ "type": "placed", "seat": 0, "value": 3, "count": 4, "casino": 3 }
-
-{ "type": "payout", "round": 1,
-  "casinos": [ {"dieValue":1, "voided":[1,2], "awards":[{"seat":0,"note":40000}], "leftover":[10000]} ],
-  "totals": [ {"seat":0,"money":120000,"banknotes":3} ] }
-
-{ "type": "game_over", "ranking": [ {"seat":0,"money":310000,"banknotes":9}, ... ],
-  "winners": [0] }
-
-{ "type": "error", "message": "..." }
+{ "type": "error", "message": "请先加入房间" }
 ```
 
-> 设计原则：**每个客户端只应看到自己该看的**。`your_roll` 只发给投骰者；其他人只收到 `placed`（知道放了什么，但看不到他手牌）。
+**可见性边界（核心设计）**——同一份 `room_state`，按接收者裁剪：
 
-### 14.3 重连处理
+| 字段 | 参赛者（轮到自己） | 参赛者（别人回合） | 观战者 |
+| --- | --- | --- | --- |
+| `currentRoll` 当前投骰点数 | ✅ | ✅ | ✅ |
+| `yourRoll` 自己掷出的点数 | ✅ | 空 | 空 |
+| `options` 可选点数 | ✅ | 空 | 空 |
+| `canRoll` / `canChoose` | ✅ | false | false |
+| `yourColor` / `yourColorName` | ✅ | ✅ | null |
+| `canJoin`（大厅未满时可入座） | false | false | ✅ |
 
-现有 `GameRoom.handleDisconnect` 在玩家断线时**直接重开**。拉斯维加斯是 4 轮长局，断线直接重开体验很差。建议：
-- 断线 → 标记 `offline`，**保留座位和状态**，给 30–60 秒重连窗口。
-- 超时未回 → 自动 pass（跳过其回合），游戏继续。
-- 观战者断线 → 直接移除，不影响对局。
+> 关键点：**`currentRoll` 对所有人公开**（含观战者），这是观战的核心看点；
+> 而 `yourRoll` / `options` / `canRoll` / `canChoose` 仍然只给当前玩家，避免观战者代打。
+> 两者内容在投骰者本人身上是相同的，区别只在于「谁能拿到」。
+
+### 14.3 观战与权限边界
+
+- 观战者存在独立的 `spectators`（`sessionId -> Spectator`）里，**不进 `members`、不进 `sessionToKey`**。
+  于是 `requirePlayingTurn` / `isHost` / `onStart` / `onRoll` / `onChoose` / `onAddAi` / `onRemoveAi`
+  一律查不到它，自然回落到 `"请先加入房间"`——权限边界由数据结构保证，不靠逐处 if 判断。
+- 任何进入网页的人都能收到 `room_state`：未 `join` 的连接在对局中会自动成为观战者，
+  满足「所有进入网页的人都能看到房间里的对战」。
+- 观战者**可以聊天**（聊天是围观互动，不是对局操作），消息带 `spectator: true` 与名字「观众」。
+- 大厅未满员时，观战者可以点「加入这局」正式入座（`canJoin`）。
+
+### 14.4 离开、掉线与托管
+
+- **离开（`leave`）**：离开者立刻收到一份「自己不在房间里」的状态，页面不再显示自己还在房间
+  （修掉了「离开后页面不刷新」的 bug）；随后被转为观战者，可以继续围观。
+- **对局中离开/掉线**：座位保留（便于重连），但立即标记 `autopilot: true` 交给 AI 托管。
+  否则该座位没人能操作，剩下的玩家会被**永久卡住**。
+- **重连**：本人回来时 `autopilot` 复位，收回控制权。同一账号开第二个标签页时，
+  旧连接被降级为观战者，而不是留下一个收不到消息的幽灵连接。
+- **回收**：大厅里若已无真人，AI 一并清掉；对局中若真人全部掉线，直接放弃本局回到大厅，
+  避免死局永久占位（注意判断「有无真人」时必须排除 AI 与托管者，它们恒为「在线」）。
 
 ## 15. 前端设计
 
@@ -497,16 +537,18 @@ frontend/src/utils/lasvegas.js      ← 可选：状态/颜色/格式化辅助
 <router-link to="/las-vegas" class="btn-contact btn-game">🎲 拉斯维加斯</router-link>
 ```
 
-### 15.4 界面区块
+### 15.4 界面区块（已按实现更新）
 
 | 区块 | 内容 |
 |---|---|
 | **赌场区** | 6 个赌场卡（点数 + 当前钞票面额列表 + 已放骰子按玩家颜色分组显示） |
 | **我的骰子区** | 剩余骰子；投骰后高亮可选点数，显示「放 N 个 3」按钮 |
 | **玩家面板** | 每人的颜色、剩余骰数、已赢金额、钞票张数 |
-| **轮次/回合提示** | 「第 2 / 4 轮」「轮到 chycal」 |
-| **观战区** | 观战者列表（复用五子棋样式） |
-| **评论/聊天** | 复用五子棋的 `chat` + `comments` 机制 |
+| **颜色图例卡** | 自己的颜色（`yourColor`）+ 全场每个人的颜色圆点与「我 / 电脑 / 托管」标记；观战者看到的是「👀 你正在观战」 |
+| **当前投骰提示** | 「**某某** 掷出了：⚀⚂⚂」——按该玩家颜色着色，**所有人（含观战者）可见** |
+| **轮次/回合提示** | 「第 2 / 4 轮」「轮到 chycal」（名字按该玩家颜色着色） |
+| **观战面板** | 观战人数；观战者看到只读的全场金额/钞票/剩余骰子一览 |
+| **聊天** | 自动跟随最新消息 + 上滑时出现「有新消息 ↓」跳转按钮；观众发言带「观众」标记 |
 
 ### 15.5 交互要点
 
@@ -544,9 +586,17 @@ frontend/src/utils/lasvegas.js      ← 可选：状态/颜色/格式化辅助
 
 ### 16.2 集成测试
 
-- WebSocket 消息往返：`roll` → `your_roll`；`choose` → `placed` → 广播。
+- WebSocket 消息往返：`roll` → `room_state.yourRoll`；`choose` → 广播。
 - 非当前玩家操作被拒。
 - 断线重连状态恢复。
+
+实际落地在 `LasVegasRoomAiTest`（26 个用例，`@Nested` 分组）：
+`Lobby` / `Playing` / `Restart` / `Spectating` 四组，其中 `Spectating` 覆盖
+「所有人都能观战」「观战者不能操作」「迟到者自动转观战」「满员回落观战」
+「观战者可在大厅入座」「当前点数公开」「离开立即刷新自己的视图」
+「观战者可聊天」「颜色互不相同且已下发」。
+另有一个用真实 WebSocket 连服务端的端到端脚本（44 项断言），
+覆盖颜色、观战、公开点数、离开刷新、托管接手五条链路。
 
 ## 17. 实现顺序建议
 
@@ -574,4 +624,11 @@ frontend/src/utils/lasvegas.js      ← 可选：状态/颜色/格式化辅助
    登录玩家可在「战绩表」标签查看自己参与过的对局。✅ 已实现。
 6. **是否重构 `GameRoom`**：**不重构**。拉斯维加斯是**完全独立**的架构，
    五子棋的 `GameRoom` 一行未动。✅ 已遵守。
+7. **观战**：**所有人都能观战，但只有参赛者能操作**。第一版只做了「观战者列表」占位，
+   后按用户需求落地为真正的只读观战（见 §14.3）。权限边界靠数据结构保证
+   （观战者不进 `members`/`sessionToKey`），不靠逐处 if。✅ 已实现。
+8. **颜色可见性**：**每人固定一个颜色，自己和他人都能看到**。颜色在加入时确定，
+   不随座位变动，与前端 `DICE_COLORS` 保持同序（红蓝绿橙紫）。✅ 已实现。
+9. **中途退出**：**座位交给 AI 托管**。若只是保留座位，剩下的玩家会被永久卡住；
+   托管后本人重连即收回控制权。✅ 已实现。
 

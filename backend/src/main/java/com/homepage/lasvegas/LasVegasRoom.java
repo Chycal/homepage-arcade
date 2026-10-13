@@ -39,6 +39,16 @@ public class LasVegasRoom {
     private static final int MAX_MEMBERS = 5;
 
     /**
+     * 玩家颜色（下标即 colorIndex）。
+     *
+     * 与前端 {@code DICE_COLORS} 保持一致；颜色在「加入大厅」时就固定下来，
+     * 不随座位或他人进出而改变，这样每个玩家都能稳定认出自己的颜色。
+     */
+    static final String[] COLORS = {"#e53935", "#1e88e5", "#43a047", "#fb8c00", "#8e24aa"};
+    /** 颜色中文名，用于「你的颜色是●红」这类提示 */
+    static final String[] COLOR_NAMES = {"红", "蓝", "绿", "橙", "紫"};
+
+    /**
      * AI 每步之间的停顿（毫秒）。
      * 不留停顿的话，AI 会在一次广播里把整轮走完，玩家只能看到结果，
      * 体验上像是「卡了一下」。留一点间隔才能看清它逐颗落子。
@@ -58,19 +68,28 @@ public class LasVegasRoom {
         final String username;
         final boolean ai;          // 是否为电脑对手
         final LasVegasAi.Style aiStyle;
+        final int colorIndex;      // 玩家颜色，加入时固定
         WebSocketSession session;  // AI 没有连接，恒为 null
         boolean connected = true;
+        /**
+         * 托管：真人中途退出后由 AI 接手他的座位。
+         *
+         * 否则「离开」会把座位留在对局里却没人能操作，剩下的玩家会被永久卡住。
+         * 与 {@link #ai} 的区别是：托管者原本是真人，重连后可以拿回控制权。
+         */
+        boolean autopilot;
 
-        Member(String key, Long userId, String username, WebSocketSession session) {
-            this(key, userId, username, session, false, null);
+        Member(String key, Long userId, String username, WebSocketSession session, int colorIndex) {
+            this(key, userId, username, session, colorIndex, false, null);
         }
 
-        Member(String key, Long userId, String username, WebSocketSession session,
+        Member(String key, Long userId, String username, WebSocketSession session, int colorIndex,
                boolean ai, LasVegasAi.Style aiStyle) {
             this.key = key;
             this.userId = userId;
             this.username = username;
             this.session = session;
+            this.colorIndex = colorIndex;
             this.ai = ai;
             this.aiStyle = aiStyle == null ? LasVegasAi.Style.SOLID : aiStyle;
         }
@@ -84,6 +103,14 @@ public class LasVegasRoom {
     private final Map<String, Member> members = new LinkedHashMap<>();
     /** sessionId -> 成员 key */
     private final Map<String, String> sessionToKey = new LinkedHashMap<>();
+    /**
+     * 观战者：sessionId -> session。
+     *
+     * 观战者只读：不在 {@link #members} 里，因此不占座位、不参与对局，
+     * 也无法通过 {@code sessionToKey} 触发任何操作。任何进入网页的人都能观战，
+     * 但对局中的房间不会再接纳新玩家。
+     */
+    private final Map<String, Spectator> spectators = new LinkedHashMap<>();
     /** 开局后 座位 -> 成员 key */
     private final List<String> seatOrder = new ArrayList<>();
     private final LinkedList<Map<String, Object>> chat = new LinkedList<>();
@@ -127,6 +154,11 @@ public class LasVegasRoom {
 
     public void handleDisconnect(WebSocketSession session) {
         synchronized (this) {
+            // 观战者断开：直接摘掉即可，不影响任何对局状态
+            if (spectators.remove(session.getId()) != null) {
+                log.debug("[{}] 观战者断开 {}", roomCode, session.getId());
+                return;
+            }
             String key = sessionToKey.remove(session.getId());
             if (key == null) {
                 return;
@@ -139,27 +171,40 @@ public class LasVegasRoom {
                 }
                 pruneAiIfNoHuman();
             } else {
-                // 对局中保留座位以便重连
+                // 对局中保留座位以便重连；同时交给 AI 托管，避免掉线者把对局卡死
                 Member member = members.get(key);
                 if (member != null) {
                     member.connected = false;
                     member.session = null;
+                    if (!member.ai) {
+                        member.autopilot = true;
+                    }
                 }
                 // 若全员掉线，则放弃这局，房间回到大厅，避免死局永久占位
                 // 注意：AI 成员恒为「在线」，这里必须只看真人，否则房间永远等不到回收
-                boolean anyoneOnline = false;
-                for (Member m : members.values()) {
-                    if (m.connected && !m.ai) {
-                        anyoneOnline = true;
-                        break;
-                    }
-                }
-                if (!anyoneOnline) {
+                if (!anyHumanOnline()) {
                     log.info("[{}] 全员掉线，放弃本局并回到大厅", roomCode);
                     resetToLobby(false);
                 }
             }
             broadcastState();
+            // 掉线者可能正好是当前玩家，托管要立刻接手，否则对局会停住
+            scheduleAiTurn();
+        }
+    }
+    /**
+     * 观战者：只读连接。
+     *
+     * 不占座位、不参与对局、不能触发任何操作，只是持续接收 {@code room_state}。
+     * 任何打开网页的人都能看到房间里的对战，但只有参赛者能游玩。
+     */
+    private static class Spectator {
+        final WebSocketSession session;
+        final String username;   // 仅用于日志/人数展示，可为 null
+
+        Spectator(WebSocketSession session, String username) {
+            this.session = session;
+            this.username = username;
         }
     }
 
@@ -279,26 +324,41 @@ public class LasVegasRoom {
         synchronized (this) {
             Member existing = members.get(key);
             if (existing != null) {
-                // 重连：换绑 session
-                if (existing.session != null) {
-                    sessionToKey.remove(existing.session.getId());
+                // 重连：换绑 session。旧连接（例如同一账号的另一个标签页）
+                // 降级为观战者，而不是留成一个收不到消息的幽灵连接。
+                if (existing.session != null && !existing.session.getId().equals(session.getId())) {
+                    WebSocketSession old = existing.session;
+                    sessionToKey.remove(old.getId());
+                    if (old.isOpen()) {
+                        spectators.put(old.getId(), new Spectator(old, existing.username));
+                    }
                 }
                 existing.session = session;
                 existing.connected = true;
+                // 本人回来了，收回托管控制权
+                existing.autopilot = false;
                 sessionToKey.put(session.getId(), key);
+                spectators.remove(session.getId());
                 log.info("[{}] {} 重新连接", roomCode, existing.username);
             } else {
-                if (roomPhase != RoomPhase.LOBBY) {
-                    sendError(session, "对局已开始，本局不能加入新玩家");
-                    return;
+                boolean spectateOnly = Boolean.TRUE.equals(message.get("spectate"));
+                if (spectateOnly) {
+                    becomeSpectator(session, username);
+                    log.info("[{}] {} 以观战身份进入", roomCode, username);
+                } else if (roomPhase != RoomPhase.LOBBY) {
+                    // 对局进行中不再接纳新玩家，但可以观战 —— 任何进入网页的人都能看到对局
+                    becomeSpectator(session, username);
+                    log.info("[{}] {} 对局已开始，转为观战", roomCode, username);
+                } else if (members.size() >= MAX_MEMBERS) {
+                    // 满员时也不拒绝，改为观战，避免「进来看不到任何东西」
+                    becomeSpectator(session, username);
+                    log.info("[{}] 房间已满，{} 转为观战", roomCode, username);
+                } else {
+                    members.put(key, new Member(key, userId, username, session, nextColorIndex()));
+                    sessionToKey.put(session.getId(), key);
+                    spectators.remove(session.getId());
+                    log.info("[{}] {} 加入（共 {} 人）", roomCode, username, members.size());
                 }
-                if (members.size() >= MAX_MEMBERS) {
-                    sendError(session, "房间已满（最多 " + MAX_MEMBERS + " 人）");
-                    return;
-                }
-                members.put(key, new Member(key, userId, username, session));
-                sessionToKey.put(session.getId(), key);
-                log.info("[{}] {} 加入（共 {} 人）", roomCode, username, members.size());
             }
             broadcastState();
         }
@@ -308,22 +368,85 @@ public class LasVegasRoom {
         synchronized (this) {
             String key = sessionToKey.get(session.getId());
             if (key == null) {
+                // 观战者「离开」：停止接收状态即可。给他发一份匿名状态，
+                // 前端据此把自己切回「未加入」的界面。
+                if (spectators.remove(session.getId()) != null) {
+                    sendState(session);
+                }
                 return;
             }
             if (roomPhase == RoomPhase.PLAYING) {
-                // 对局中离开只标记掉线，保留座位以便重连
+                // 对局中离开：保留座位（重连可继续），但立刻交给 AI 托管，
+                // 否则这个座位没人能操作，剩下的玩家会被永久卡住。
                 Member member = members.get(key);
                 if (member != null) {
                     member.connected = false;
                     member.session = null;
+                    if (!member.ai) {
+                        member.autopilot = true;
+                    }
+                }
+                // 真人全走光就没必要留着这局（AI 会一直卡在等人投骰）
+                if (!anyHumanOnline()) {
+                    log.info("[{}] 真人已全部离开，放弃本局并回到大厅", roomCode);
+                    resetToLobby(false);
+                    becomeSpectator(session, null);
+                    broadcastState();
+                    return;
                 }
             } else {
                 members.remove(key);
                 sessionToKey.remove(session.getId());
                 pruneAiIfNoHuman();
             }
+            // 关键：离开者自己也要收到新状态，否则他的页面会停留在旧画面，
+            // 仍然显示「自己在房间里」。这里把他转为观战者，于是他能继续看这局，
+            // 但不再占座位、不能操作。
+            becomeSpectator(session, null);
+            log.info("[{}] {} 离开房间，转为观战", roomCode, key);
             broadcastState();
+            // 若正好轮到他，托管要立刻接手，否则剩下的玩家会被卡住
+            scheduleAiTurn();
         }
+    }
+
+    /** 把一个连接登记为观战者（幂等）；会先摘掉它的成员身份 */
+    private void becomeSpectator(WebSocketSession session, String username) {
+        String oldKey = sessionToKey.remove(session.getId());
+        if (oldKey != null) {
+            Member member = members.get(oldKey);
+            if (member != null) {
+                member.connected = false;
+                member.session = null;
+            }
+        }
+        spectators.put(session.getId(), new Spectator(session, username));
+    }
+
+    /** 是否还有在线的真人成员（AI 恒为「在线」，不能算） */
+    private boolean anyHumanOnline() {
+        for (Member m : members.values()) {
+            if (m.connected && !m.ai) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    /** 取一个当前未被占用的颜色下标，保证同房间内玩家颜色两两不同 */
+    private int nextColorIndex() {
+        boolean[] used = new boolean[COLORS.length];
+        for (Member member : members.values()) {
+            if (member.colorIndex >= 0 && member.colorIndex < used.length) {
+                used[member.colorIndex] = true;
+            }
+        }
+        for (int i = 0; i < used.length; i++) {
+            if (!used[i]) {
+                return i;
+            }
+        }
+        return members.size() % COLORS.length;
     }
 
     private void onStart(WebSocketSession session) {
@@ -447,7 +570,7 @@ public class LasVegasRoom {
             String aiKey = "ai:" + aiSeq;
             String aiName = "电脑" + aiSeq + "（" + style.getLabel() + "）";
             // AI 没有 WebSocket 连接，session 恒为 null；safeSend/broadcastState 会跳过它
-            members.put(aiKey, new Member(aiKey, null, aiName, null, true, style));
+            members.put(aiKey, new Member(aiKey, null, aiName, null, nextColorIndex(), true, style));
             log.info("[{}] 添加电脑对手 {}（共 {} 人）", roomCode, aiName, members.size());
             broadcastState();
         }
@@ -495,7 +618,7 @@ public class LasVegasRoom {
             if (!name.equals(member.username)) {
                 // key 已存在，put 不会改变 LinkedHashMap 的顺序
                 members.put(entry.getKey(),
-                        new Member(member.key, null, name, null, true, member.aiStyle));
+                        new Member(member.key, null, name, null, member.colorIndex, true, member.aiStyle));
             }
         }
         aiSeq = seq;
@@ -539,7 +662,7 @@ public class LasVegasRoom {
         }
         String currentKey = game.getCurrentPlayerId();
         Member current = currentKey == null ? null : members.get(currentKey);
-        if (current == null || !current.ai) {
+        if (!isAutomated(current)) {
             return;
         }
         aiTurnScheduled = true;
@@ -551,6 +674,16 @@ public class LasVegasRoom {
         }
     }
 
+    /**
+     * 该座位是否由程序代打。
+     *
+     * 包括两种：房主添加的电脑对手，以及真人中途退出后被托管的座位。
+     * 后者原本是真人，重连后会取消托管并交还控制权。
+     */
+    private boolean isAutomated(Member member) {
+        return member != null && (member.ai || member.autopilot);
+    }
+
     /** 在调度线程上执行一次 AI 行动 */
     private void runAiTurn() {
         synchronized (this) {
@@ -560,7 +693,7 @@ public class LasVegasRoom {
             }
             String currentKey = game.getCurrentPlayerId();
             Member current = currentKey == null ? null : members.get(currentKey);
-            if (current == null || !current.ai) {
+            if (!isAutomated(current)) {
                 return;
             }
             try {
@@ -606,10 +739,12 @@ public class LasVegasRoom {
         }
     }
 
-    private void onChat(WebSocketSession session, Map<String, Object> message) {        synchronized (this) {
+    private void onChat(WebSocketSession session, Map<String, Object> message) {
+        synchronized (this) {
             String key = sessionToKey.get(session.getId());
             Member member = key == null ? null : members.get(key);
-            if (member == null) {
+            Spectator spectator = spectators.get(session.getId());
+            if (member == null && spectator == null) {
                 sendError(session, "请先加入房间");
                 return;
             }
@@ -621,7 +756,17 @@ public class LasVegasRoom {
                 text = text.substring(0, 200);
             }
             Map<String, Object> entry = new LinkedHashMap<>();
-            entry.put("username", member.username);
+            // 观战者也能发言（聊天属于围观互动，不是对局操作），但会带上「观众」标记
+            if (member != null) {
+                entry.put("username", member.username);
+                entry.put("color", COLORS[member.colorIndex % COLORS.length]);
+                entry.put("colorName", COLOR_NAMES[member.colorIndex % COLOR_NAMES.length]);
+                entry.put("spectator", false);
+            } else {
+                String name = spectator.username;
+                entry.put("username", name == null || name.isEmpty() ? "观众" : name);
+                entry.put("spectator", true);
+            }
             entry.put("text", text);
             chat.addLast(entry);
             while (chat.size() > CHAT_LIMIT) {
@@ -714,16 +859,32 @@ public class LasVegasRoom {
                 sendState(member.session);
             }
         }
+        // 观战者：任何进入网页的人都能看到房间里的对战
+        for (Spectator spectator : new ArrayList<>(spectators.values())) {
+            WebSocketSession session = spectator.session;
+            if (session == null || !session.isOpen()) {
+                spectators.remove(session == null ? "" : session.getId());
+                continue;
+            }
+            sendState(session);
+        }
     }
 
     private void sendState(WebSocketSession session) {
         String key = sessionToKey.get(session.getId());
+        boolean spectating = key == null && spectators.containsKey(session.getId());
         Map<String, Object> payload = new LinkedHashMap<>();
         payload.put("type", "room_state");
         payload.put("roomCode", roomCode);
         payload.put("phase", roomPhase.name());
         payload.put("isHost", key != null && isHost(key));
         payload.put("you", key);
+        // 自己的颜色，前端用来显示「你的颜色」并把自己和他人区分开
+        payload.put("yourColor", colorOf(key));
+        payload.put("yourColorName", colorNameOf(key));
+        // 观战标记 + 观战人数，前端据此切换只读 UI
+        payload.put("spectator", spectating);
+        payload.put("spectatorCount", spectators.size());
         payload.put("chat", new ArrayList<>(chat));
 
         if (game == null) {
@@ -731,6 +892,8 @@ public class LasVegasRoom {
             payload.put("casinos", Collections.emptyList());
             payload.put("round", 0);
             payload.put("totalRounds", LasVegasGame.TOTAL_ROUNDS);
+            // 观战者在大厅且未满员时可以选择入座
+            payload.put("canJoin", spectating && members.size() < MAX_MEMBERS);
             payload.put("canStart", key != null && isHost(key)
                     && members.size() >= LasVegasGame.MIN_PLAYERS);
             payload.put("minPlayers", LasVegasGame.MIN_PLAYERS);
@@ -740,6 +903,7 @@ public class LasVegasRoom {
             payload.put("canRemoveAi", key != null && isHost(key));
             payload.put("aiStyles", aiStyleOptions());
             payload.put("yourRoll", Collections.emptyList());
+            payload.put("currentRoll", Collections.emptyList());
             payload.put("options", Collections.emptyMap());
             payload.put("canRoll", false);
             payload.put("canChoose", false);
@@ -755,11 +919,14 @@ public class LasVegasRoom {
         payload.put("deckTotal", game.getDeckTotalValue());
         payload.put("currentPlayerKey", game.getCurrentPlayerId());
         payload.put("currentPlayerName", usernameOf(game.getCurrentPlayerId()));
+        payload.put("currentPlayerColor", colorOf(game.getCurrentPlayerId()));
         payload.put("lastPayout", payouts());
 
         boolean myTurn = key != null && key.equals(game.getCurrentPlayerId())
                 && roomPhase == RoomPhase.PLAYING;
         payload.put("yourRoll", myTurn ? game.getLastRoll() : Collections.emptyList());
+        // 当前投骰玩家投出的点数，对所有人（含观战者）公开 —— 这是观战的核心看点
+        payload.put("currentRoll", game.getLastRoll());
         payload.put("options", myTurn ? game.getOptions() : Collections.emptyMap());
         payload.put("canRoll", myTurn && !game.hasRolled());
         payload.put("canChoose", myTurn && game.hasRolled());
@@ -802,9 +969,12 @@ public class LasVegasRoom {
             entry.put("key", member.key);
             entry.put("username", member.username);
             entry.put("seat", seat++);
+            entry.put("color", COLORS[member.colorIndex % COLORS.length]);
+            entry.put("colorName", COLOR_NAMES[member.colorIndex % COLOR_NAMES.length]);
             entry.put("connected", member.connected);
             entry.put("isHost", member.key.equals(host));
             entry.put("ai", member.ai);
+            entry.put("autopilot", member.autopilot);
             if (member.ai) {
                 entry.put("aiStyle", member.aiStyle.name());
                 entry.put("aiStyleLabel", member.aiStyle.getLabel());
@@ -823,8 +993,11 @@ public class LasVegasRoom {
             entry.put("key", key);
             entry.put("username", member != null ? member.username : key);
             entry.put("seat", player.getSeat());
+            entry.put("color", colorOf(key));
+            entry.put("colorName", colorNameOf(key));
             entry.put("connected", member != null && member.connected);
             entry.put("ai", member != null && member.ai);
+            entry.put("autopilot", member != null && member.autopilot);
             entry.put("diceLeft", player.getDiceLeft());
             entry.put("money", player.getMoney());
             entry.put("banknotes", player.getBanknoteCount());
@@ -848,6 +1021,7 @@ public class LasVegasRoom {
                 Map<String, Object> d = new LinkedHashMap<>();
                 d.put("seat", e.getKey());
                 d.put("username", usernameOf(key));
+                d.put("color", colorOf(key));
                 d.put("count", e.getValue());
                 dice.add(d);
             }
@@ -880,6 +1054,18 @@ public class LasVegasRoom {
     private String usernameOf(String key) {
         Member member = members.get(key);
         return member != null ? member.username : key;
+    }
+
+    /** 玩家颜色（hex），未加入者返回 null */
+    private String colorOf(String key) {
+        Member member = members.get(key);
+        return member == null ? null : COLORS[member.colorIndex % COLORS.length];
+    }
+
+    /** 玩家颜色中文名，未加入者返回 null */
+    private String colorNameOf(String key) {
+        Member member = members.get(key);
+        return member == null ? null : COLOR_NAMES[member.colorIndex % COLOR_NAMES.length];
     }
 
     // ------------------------------------------------------------------

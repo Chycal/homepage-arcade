@@ -28,6 +28,36 @@
         <span class="dot"></span>
         {{ connected ? '已连接' : '连接中断，正在重连…' }}
         <span class="lv-room">房间：{{ state.roomCode || 'default' }}</span>
+        <span v-if="state.spectator" class="lv-room">
+          观战中<span v-if="state.spectatorCount > 1">（{{ state.spectatorCount }} 人围观）</span>
+        </span>
+      </div>
+
+      <!-- 颜色名册：每个人都能一眼看出自己和别人的颜色 -->
+      <div v-if="players.length" class="lv-card lv-legend">
+        <div class="lv-legend-me">
+          <template v-if="state.you">
+            <span class="lv-dot big" :style="{ background: state.yourColor || '#999' }"></span>
+            <span>你的颜色：<b>{{ state.yourColorName || '—' }}</b>（{{ me ? me.username : '' }}）</span>
+          </template>
+          <template v-else>
+            <span class="lv-legend-eye">👀</span>
+            <span><b>你正在观战</b>，不能操作对局。</span>
+          </template>
+        </div>
+        <div class="lv-legend-list">
+          <span v-for="p in players" :key="p.key" class="lv-legend-item"
+                :class="{ me: p.key === state.you }">
+            <span class="lv-dot" :style="{ background: colorOfPlayer(p) }"></span>
+            <span class="lv-legend-name">{{ p.username }}</span>
+            <span v-if="p.key === state.you" class="lv-legend-tag">我</span>
+            <span v-else-if="p.ai" class="lv-legend-tag ai">电脑</span>
+            <span v-else-if="p.autopilot" class="lv-legend-tag ai">托管</span>
+          </span>
+        </div>
+        <button v-if="state.canJoin" class="lv-btn primary small" @click="joinAsPlayer">
+          加入这局
+        </button>
       </div>
 
       <!-- 大厅 -->
@@ -35,12 +65,13 @@
         <h2>玩家列表（{{ players.length }} / {{ state.maxPlayers || 5 }}）</h2>
         <ul class="lv-players">
           <li v-for="p in players" :key="p.key" :class="{ me: p.key === state.you, ai: p.ai }">
-            <span class="lv-dot" :style="{ background: diceColor(p.seat) }"></span>
+            <span class="lv-dot" :style="{ background: colorOfPlayer(p) }"></span>
             <span class="lv-name">{{ p.username }}</span>
             <span v-if="p.isHost" class="lv-badge">房主</span>
             <span v-if="p.ai" class="lv-badge ai-badge">🤖 {{ p.aiStyleLabel || '电脑' }}</span>
+            <span v-else-if="p.autopilot" class="lv-badge ai-badge">🤖 托管中</span>
             <span v-if="p.key === state.you" class="lv-badge me-badge">我</span>
-            <span v-if="!p.connected" class="lv-offline">掉线</span>
+            <span v-if="!p.connected && !p.autopilot" class="lv-offline">掉线</span>
             <button
               v-if="p.ai && state.canRemoveAi"
               class="lv-remove-ai"
@@ -67,15 +98,23 @@
         <p v-else-if="state.isHost && phase === 'LOBBY'" class="lv-add-ai-full">
           房间已满（{{ state.maxPlayers || 5 }} 人），无法再添加电脑对手。
         </p>
-        <p v-else-if="phase === 'LOBBY' && !state.isHost" class="lv-add-ai-full">
+        <p v-else-if="!state.spectator && phase === 'LOBBY' && !state.isHost" class="lv-add-ai-full">
           房主可以添加电脑对手陪你玩。
         </p>
 
         <div class="lv-actions">
-          <button class="lv-btn primary" :disabled="!state.canStart" @click="start">
-            {{ state.canStart ? '开始对局' : (state.isHost ? '等待其他玩家…' : '等待房主开始') }}
-          </button>
-          <button class="lv-btn ghost" @click="leave">离开房间</button>
+          <template v-if="!state.spectator">
+            <button class="lv-btn primary" :disabled="!state.canStart" @click="start">
+              {{ state.canStart ? '开始对局' : (state.isHost ? '等待其他玩家…' : '等待房主开始') }}
+            </button>
+            <button class="lv-btn ghost" @click="leave">离开房间</button>
+          </template>
+          <template v-else>
+            <button v-if="state.canJoin" class="lv-btn primary" @click="joinAsPlayer">
+              加入这局
+            </button>
+            <span v-else class="lv-hint">房间已满，你将以观战身份继续观看。</span>
+          </template>
         </div>
       </div>
 
@@ -84,11 +123,26 @@
         <div class="lv-round">
           <span class="lv-round-num">第 {{ state.round }} / {{ state.totalRounds }} 轮</span>
           <span class="lv-turn" v-if="phase === 'PLAYING'">
-            当前：<b>{{ state.currentPlayerName }}</b>
+            当前：<b :style="{ color: state.currentPlayerColor || '#333' }">
+              {{ state.currentPlayerName }}</b>
             <span v-if="isMyTurn" class="lv-your-turn">轮到你了！</span>
           </span>
           <span class="lv-turn" v-else>对局结束</span>
           <span class="lv-deck">钞票堆剩余 {{ state.deckSize }} 张</span>
+        </div>
+
+        <!-- 当前投骰玩家投出的点数：所有人都能看到（含观战者） -->
+        <div v-if="phase === 'PLAYING' && currentRoll.length" class="lv-current-roll">
+          <span class="lv-current-roll-label">
+            <b :style="{ color: state.currentPlayerColor || '#333' }">
+              {{ state.currentPlayerName }}</b>
+            {{ isMyTurn ? '你' : '他' }}掷出了：
+          </span>
+          <span v-for="(v, i) in currentRoll" :key="i" class="lv-roll-die"
+                :style="{ background: state.currentPlayerColor || '#999' }">{{ v }}</span>
+          <span class="lv-current-roll-tip">
+            {{ isMyTurn ? '请选择要放入赌场的点数' : '等待选择点数…' }}
+          </span>
         </div>
 
         <!-- 赌场 -->
@@ -107,7 +161,8 @@
             <div class="lv-dice-area">
               <span v-if="!c.dice.length" class="lv-empty">暂无骰子</span>
               <span v-for="d in c.dice" :key="d.seat" class="lv-dice"
-                    :style="{ background: diceColor(d.seat) }"
+                    :class="{ mine: d.seat === mySeat }"
+                    :style="{ background: d.color || diceColor(d.seat) }"
                     :title="d.username">
                 {{ d.count }}
               </span>
@@ -115,9 +170,13 @@
           </div>
         </div>
 
-        <!-- 我的操作区 -->
-        <div v-if="phase === 'PLAYING'" class="lv-card lv-me">
+        <!-- 我的操作区（观战者只看不玩） -->
+        <div v-if="phase === 'PLAYING' && !state.spectator" class="lv-card lv-me">
           <div class="lv-me-head">
+            <span class="lv-me-color">
+              <span class="lv-dot" :style="{ background: state.yourColor || '#999' }"></span>
+              我的颜色：<b>{{ state.yourColorName || '—' }}</b>
+            </span>
             <span>我的骰子：<b>{{ me ? me.diceLeft : 0 }}</b> 颗</span>
             <span>我的资金：<b>${{ money(me ? me.money : 0) }}</b>（{{ me ? me.banknotes : 0 }} 张）</span>
           </div>
@@ -143,21 +202,38 @@
           <p v-else class="lv-hint">等待 {{ state.currentPlayerName }} 行动…</p>
         </div>
 
+        <!-- 观战者：看得到双方资金，但没有操作按钮 -->
+        <div v-else-if="phase === 'PLAYING'" class="lv-card lv-me lv-watching">
+          <p class="lv-hint">
+            👀 你正在观战，只能观看不能操作。本局玩家资金：
+          </p>
+          <div class="lv-watch-players">
+            <span v-for="p in players" :key="p.key" class="lv-watch-player">
+              <span class="lv-dot" :style="{ background: colorOfPlayer(p) }"></span>
+              <b>{{ p.username }}</b>
+              <span class="lv-watch-money">${{ money(p.money) }}（{{ p.banknotes }} 张）</span>
+              <span class="lv-watch-dice">剩 {{ p.diceLeft }} 颗</span>
+            </span>
+          </div>
+        </div>
+
         <!-- 结算结果 -->
         <div v-if="phase === 'FINISHED'" class="lv-card lv-result">
           <h2>🏆 对局结果</h2>
           <ul class="lv-winners">
             <li v-for="w in (state.winners || [])" :key="w.key">
-              <span class="lv-dot" :style="{ background: diceColor(seatOf(w.key)) }"></span>
+              <span class="lv-dot" :style="{ background: colorOfKey(w.key) }"></span>
               <b>{{ w.username }}</b>
               <span class="lv-win-money">${{ money(w.money) }}（{{ w.banknotes }} 张）</span>
             </li>
           </ul>
           <div class="lv-standings">
             <div v-for="p in players" :key="p.key" class="lv-standing-row">
-              <span class="lv-dot" :style="{ background: diceColor(p.seat) }"></span>
+              <span class="lv-dot" :style="{ background: colorOfPlayer(p) }"></span>
               <span class="lv-name">{{ p.username }}</span>
+              <span v-if="p.key === state.you" class="lv-badge me-badge">我</span>
               <span v-if="p.ai" class="lv-badge ai-badge">电脑</span>
+              <span v-else-if="p.autopilot" class="lv-badge ai-badge">托管</span>
               <span class="lv-standing-money">${{ money(p.money) }}</span>
               <span class="lv-standing-notes">{{ p.banknotes }} 张</span>
             </div>
@@ -165,9 +241,10 @@
           <p v-if="state.matchId" class="lv-hint">
             本局战绩已保存（#{{ state.matchId }}），可到「战绩表」查看。
           </p>
-          <div class="lv-actions">
+          <div v-if="!state.spectator" class="lv-actions">
             <button class="lv-btn primary" @click="restart">再来一局</button>
           </div>
+          <p v-else class="lv-hint">观战模式：等房主点「再来一局」后即可加入。</p>
         </div>
 
         <!-- 上一轮结算 -->
@@ -189,13 +266,23 @@
 
       <!-- 聊天 -->
       <div class="lv-card lv-chat">
-        <h3>聊天</h3>
-        <div class="lv-chat-list">
-          <p v-for="(m, i) in (state.chat || [])" :key="i">
-            <b>{{ m.username }}</b>：{{ m.text }}
+        <h3>
+          聊天
+          <span v-if="state.spectatorCount > 1" class="lv-chat-sub">
+            （{{ state.spectatorCount }} 人围观）
+          </span>
+        </h3>
+        <!-- 新消息自动跟随到底部；用户往上翻时不打断阅读 -->
+        <div ref="chatList" class="lv-chat-list" @scroll="onChatScroll">
+          <p v-for="(m, i) in (state.chat || [])" :key="i" :class="{ 'lv-chat-spectator': m.spectator }">
+            <span v-if="m.color" class="lv-dot tiny" :style="{ background: m.color }"></span>
+            <b>{{ m.username }}</b><span v-if="m.spectator" class="lv-chat-tag">观众</span>：{{ m.text }}
           </p>
           <p v-if="!(state.chat || []).length" class="lv-empty">还没有消息</p>
         </div>
+        <button v-if="chatUnread" class="lv-chat-jump" @click="scrollChatToBottom">
+          有新消息 ↓
+        </button>
         <form class="lv-chat-form" @submit.prevent="sendChat">
           <input v-model="chatText" maxlength="200" placeholder="说点什么…" />
           <button class="lv-btn primary" type="submit">发送</button>
@@ -311,7 +398,11 @@ export default {
       loadingMatches: false,
       expanded: [],
       reconnectTimer: null,
-      aiStyle: 'SOLID'
+      aiStyle: 'SOLID',
+      chatUnread: false,
+      chatAtBottom: true,
+      // 主动离开后，重连时自动以观战身份进来，不会又悄悄占回座位
+      leftRoom: false
     }
   },
   computed: {
@@ -335,8 +426,15 @@ export default {
     me() {
       return this.players.find(p => p.key === this.state.you) || null
     },
+    mySeat() {
+      return this.me ? this.me.seat : -1
+    },
     isMyTurn() {
       return !!(this.state.canRoll || this.state.canChoose)
+    },
+    // 当前投骰玩家投出的点数，所有人（含观战者）都能看到
+    currentRoll() {
+      return this.state.currentRoll || []
     },
     options() {
       return Object.entries(this.state.options || {})
@@ -365,6 +463,15 @@ export default {
     },
     diceColor(seat) {
       return DICE_COLORS[seat % DICE_COLORS.length]
+    },
+    // 优先用后端下发的颜色（加入时固定），没有时按座位兜底
+    colorOfPlayer(p) {
+      if (p && p.color) return p.color
+      return this.diceColor(p ? p.seat : 0)
+    },
+    colorOfKey(key) {
+      const p = this.players.find(x => x.key === key)
+      return p ? this.colorOfPlayer(p) : '#999'
     },
     seatOf(key) {
       const p = this.players.find(x => x.key === key)
@@ -400,7 +507,8 @@ export default {
           type: 'join',
           token: getAccessToken() || '',
           guestId: this.guestId,
-          username: getUsername() || ''
+          username: getUsername() || '',
+          spectate: this.leftRoom
         })
       }
 
@@ -433,11 +541,40 @@ export default {
       switch (msg.type) {
         case 'room_state':
           this.state = msg
+          this.afterState()
           break
         case 'error':
           this.showToast(msg.message)
           break
       }
+    },
+    // 每次收到新状态后，让聊天记录自动跟随到最新一条
+    afterState() {
+      this.$nextTick(() => {
+        const el = this.$refs.chatList
+        if (!el) return
+        if (this.chatAtBottom) {
+          el.scrollTop = el.scrollHeight
+          this.chatUnread = false
+        } else if ((this.state.chat || []).length) {
+          this.chatUnread = true
+        }
+      })
+    },
+    // 用户手动往上翻时，停止自动滚动，避免打断阅读
+    onChatScroll() {
+      const el = this.$refs.chatList
+      if (!el) return
+      const atBottom = el.scrollHeight - el.scrollTop - el.clientHeight < 24
+      this.chatAtBottom = atBottom
+      if (atBottom) this.chatUnread = false
+    },
+    scrollChatToBottom() {
+      const el = this.$refs.chatList
+      if (!el) return
+      el.scrollTop = el.scrollHeight
+      this.chatAtBottom = true
+      this.chatUnread = false
     },
     roll() {
       this.send({ type: 'roll' })
@@ -451,8 +588,25 @@ export default {
     restart() {
       this.send({ type: 'restart' })
     },
+    // 离开房间：后端会把自己转为观战者并发回新状态，本地也立即清掉「我」的身份，
+    // 这样页面立刻反映「已不在房间里」，不必等刷新
     leave() {
-      this.send({ type: 'leave' })
+      if (this.send({ type: 'leave' })) {
+        this.leftRoom = true
+        this.state = { ...this.state, you: null, isHost: false, canStart: false, spectator: true }
+        this.showToast('已离开房间，正在以观战身份观看')
+      }
+    },
+    // 以观战身份进来的人，在大厅且未满员时可以入座
+    joinAsPlayer() {
+      if (this.send({
+        type: 'join',
+        token: getAccessToken() || '',
+        guestId: this.guestId,
+        username: getUsername() || ''
+      })) {
+        this.leftRoom = false
+      }
     },
     addAi() {
       this.send({ type: 'add_ai', style: this.aiStyle })
@@ -465,6 +619,9 @@ export default {
       if (!text) return
       if (this.send({ type: 'chat', text })) {
         this.chatText = ''
+        // 自己发言后总是跟随到底部
+        this.chatAtBottom = true
+        this.$nextTick(() => this.scrollChatToBottom())
       }
     },
     switchToRecord() {
@@ -1039,6 +1196,171 @@ export default {
 
 .lv-chat-list p {
   margin: 3px 0;
+}
+
+/* ---------- 颜色名册 / 观战 / 当前点数 ---------- */
+
+.lv-legend {
+  padding: 12px 16px;
+  margin-bottom: 12px;
+}
+
+.lv-legend-me {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 14px;
+  margin-bottom: 10px;
+  flex-wrap: wrap;
+}
+
+.lv-legend-eye {
+  font-size: 18px;
+}
+
+.lv-legend-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 16px;
+  font-size: 13px;
+  margin-bottom: 10px;
+}
+
+.lv-legend-item {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 3px 10px;
+  border-radius: 999px;
+  background: #f4f2ee;
+}
+
+.lv-legend-item.me {
+  background: #eceafc;
+  font-weight: 600;
+}
+
+.lv-legend-tag {
+  font-size: 11px;
+  color: #667eea;
+  border: 1px solid #c9c3f5;
+  border-radius: 6px;
+  padding: 0 4px;
+}
+
+.lv-legend-tag.ai {
+  color: #8e24aa;
+  border-color: #e0c2ec;
+}
+
+.lv-dot.big {
+  width: 16px;
+  height: 16px;
+}
+
+.lv-dot.tiny {
+  width: 8px;
+  height: 8px;
+  margin-right: 4px;
+}
+
+.lv-current-roll {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  background: #fffdf5;
+  border: 1px solid #f0e2b8;
+  border-radius: 12px;
+  padding: 10px 14px;
+  margin-bottom: 12px;
+  font-size: 14px;
+}
+
+.lv-roll-die {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 26px;
+  height: 26px;
+  padding: 0 6px;
+  border-radius: 6px;
+  color: #fff;
+  font-weight: 700;
+  font-size: 14px;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.2);
+}
+
+.lv-current-roll-tip {
+  color: #999;
+  font-size: 12px;
+}
+
+.lv-me-color {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.lv-dice.mine {
+  outline: 2px solid #333;
+  outline-offset: 1px;
+}
+
+.lv-watching {
+  background: #fbfaff;
+}
+
+.lv-watch-players {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px 20px;
+  font-size: 13px;
+}
+
+.lv-watch-player {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.lv-watch-money {
+  color: #2e7d32;
+}
+
+.lv-watch-dice {
+  color: #888;
+}
+
+.lv-chat-sub {
+  font-size: 12px;
+  color: #999;
+  font-weight: 400;
+}
+
+.lv-chat-tag {
+  font-size: 11px;
+  color: #999;
+  border: 1px solid #ddd;
+  border-radius: 5px;
+  padding: 0 3px;
+  margin: 0 2px;
+}
+
+.lv-chat-spectator {
+  opacity: 0.8;
+}
+
+.lv-chat-jump {
+  display: block;
+  margin: 0 auto 8px;
+  border: none;
+  background: #667eea;
+  color: #fff;
+  border-radius: 999px;
+  padding: 4px 14px;
+  font-size: 12px;
+  cursor: pointer;
 }
 
 .lv-chat-form {

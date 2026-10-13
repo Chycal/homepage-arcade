@@ -214,6 +214,9 @@ AI 成员的约定：
 - key 形如 `ai:1`、`ai:2`（`aiSeq` 自增），与真人的 `u:<id>` / `g:<guestId>` 并列
 - 名字 `电脑<N>（<性格>）`
 
+另有一个 `boolean autopilot` 字段，表示「这个座位原本是真人，但他中途退出/掉线了，
+现在由 AI 代打」。它与 `ai` 的区别见 §6.7。
+
 ### 6.2 谁能添加
 
 `onAddAi` 的校验顺序：
@@ -234,16 +237,17 @@ AI 成员的约定：
 ```
 scheduleAiTurn()
   ├─ 仅在 PLAYING / game != null / !game.isOver() 时才继续
-  ├─ 当前玩家必须是 AI 成员
+  ├─ 当前玩家必须是「自动座位」（isAutomated：AI 或托管者）
   └─ 延迟 aiStepDelayMs 后执行 runAiTurn()
         ├─ 还没掷骰 → game.roll()
         └─ 已掷骰   → game.choose(LasVegasAi.chooseValue(...))
         └─ 结束后 persistResult() + broadcastState() + scheduleAiTurn()
 ```
 
-调用点：`onStart`（开局后）和 `onChoose`（每次有人选完点数后）。
+调用点：`onStart`（开局后）、`onChoose`（每次有人选完点数后），
+以及 `onLeave` / `handleDisconnect`（退出者可能正好是当前玩家，托管要立刻接手）。
 AI 走完后会再次 `scheduleAiTurn()`，形成链式驱动——
-如果下一个还是 AI，它会继续走，直到轮到真人为止。
+如果下一个还是 AI（或托管座位），它会继续走，直到轮到真人为止。
 
 `aiStepDelayMs` 默认 700ms，让 AI 有「思考感」，玩家能看清每一步。
 测试里用 `setAiStepDelayMs(0)` 让它瞬间走完。
@@ -266,8 +270,32 @@ AI 走完后会再次 `scheduleAiTurn()`，形成链式驱动——
 | 真人全部掉线 | 清空 AI（`pruneAiIfNoHuman`），避免留下无人可玩的空房间 |
 | 移除某个 AI | `renumberAi()` 重命名其余 AI（`电脑2` → `电脑1`），保持编号连续 |
 | 移除真人 | 不允许；`onRemoveAi` 对非 AI 目标报 `找不到该电脑对手` |
+| 真人对局中退出/掉线 | 保留座位 + 标记托管（见 §6.7） |
 
-### 6.6 战绩表
+### 6.7 托管：真人中途退出怎么办
+
+「对局中有人退出」是个必须处理的漏洞：如果只是把座位标记为掉线并保留（为了重连），
+那么**这个座位永远没人能操作**——如果正好轮到他，剩下的玩家会被永久卡住，对局直接死掉。
+
+所以退出/掉线时立刻把座位交给 AI 托管（`autopilot = true`）：
+
+| 场景 | 行为 |
+|---|---|
+| 真人点「离开房间」且对局进行中 | 保留座位（可重连）+ 立刻托管 + `scheduleAiTurn()` 接手 |
+| 真人掉线（`handleDisconnect`） | 同上 |
+| 托管者重连 | `autopilot = false`，收回控制权 |
+| 房主点「再来一局」 | 托管的座位连同 AI 一起被清掉（`resetToLobby(true)` 只保留 AI） |
+
+判定「谁来代打」统一走 `isAutomated(member)`（`ai || autopilot`），
+`scheduleAiTurn()` / `runAiTurn()` 都用它，于是托管座位复用完全相同的决策逻辑。
+
+前端把这类座位显示为「🤖 托管中」，与房主主动添加的「🤖 电脑（稳健）」区分开——
+玩家一眼能看出谁是自己加进来的，谁是掉线被接管的。
+
+> 注意：判断「房间里还有没有真人」时必须排除 AI **和**托管者，否则它们恒为
+> `connected = true`，房间永远不会被回收。
+
+### 6.8 战绩表
 
 AI 会写 `lasvegas_player` 行，但 `user_id = NULL`。
 
@@ -284,9 +312,11 @@ AI 会写 `lasvegas_player` 行，但 `user_id = NULL`。
 - **添加**：房主可见 `.lv-add-ai` 区块——性格下拉框（`state.aiStyles`）+「＋ 添加」按钮
 - **移除**：AI 那一行显示 `.lv-remove-ai` 的 ✕ 按钮（仅 `state.canRemoveAi`）
 - **标识**：AI 玩家带 `🤖 电脑` 徽章（`.lv-badge.ai-badge`），与真人视觉区分
+- **托管标识**：真人掉线被接管的座位带 `🤖 托管中` 徽章（同样用 `.ai-badge`），
+  与「房主主动添加的电脑」区分开
 
 服务端下发的字段：`canAddAi`、`canRemoveAi`、`aiStyles`（`{value, label}` 列表），
-玩家条目多了 `ai`（AI 还有 `aiStyle` / `aiStyleLabel`）。
+玩家条目多了 `ai`、`autopilot`（AI 还有 `aiStyle` / `aiStyleLabel`）。
 
 ---
 
@@ -296,7 +326,7 @@ AI 会写 `lasvegas_player` 行，但 `user_id = NULL`。
 cd backend && mvn -o test
 ```
 
-全量 **111 个测试**，其中 AI 相关 33 个：
+全量 **123 个测试**，其中 AI / 房间相关 45 个：
 
 - `LasVegasAiTest`（19 个）
   - `Basics`（5）：候选去重、View 快照、非法入参
@@ -304,10 +334,13 @@ cd backend && mvn -o test
   - `Aggression`（3）：落后时 aggression 上升、性格基线、范围钳制
   - `Gameplay`（2）：随机对局不崩、结算守恒
   - `Strength`（2）：对「骰子最多」和「随机乱放」基线各 40 局，AI 必须赢
-- `LasVegasRoomAiTest`（14 个）
+- `LasVegasRoomAiTest`（26 个）
   - `Lobby`（8）：添加、选性格、仅房主、满员拒绝、移除后重编号、拒绝移除真人、AI 不当房主、无真人时清理
   - `Playing`（4）：AI 自己走完、对局中禁止增删、AI 不阻塞真人、废弃对局不卡死房间
   - `Restart`（2）：重开保留 AI、AI 战绩以 `user_id = NULL` 落库
+  - `Spectating`（12）：所有人可观战、观战者不能操作、观战者不能开局、迟到者自动转观战、
+    满员回落观战、观战者可在大厅入座、当前点数公开、离开立即刷新自己的视图、观战者可聊天、
+    颜色互不相同且已下发，以及 3 个托管用例（中途退出交给托管、掉线交给托管、托管后仍能打完）
 
 > Java 11 限制：`@Nested` 内部类**不能**声明 `static` 方法，
 > 所以测试辅助方法都放在外层类上。另外 Surefire 2.22.2 的 `-Dtest=` 匹配不到 `@Nested` 类，
