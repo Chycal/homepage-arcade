@@ -2,15 +2,16 @@
 
 [![CI](https://github.com/Chycal/homepage-arcade/actions/workflows/ci.yml/badge.svg)](https://github.com/Chycal/homepage-arcade/actions/workflows/ci.yml)
 
-基于 **Spring Boot 2.7 + Vue 3** 的全栈个人主页项目，集成技能展示、项目卡片，以及多人实时对战五子棋，并带用户认证与访问统计。
+基于 **Spring Boot 2.7 + Vue 3** 的全栈个人主页项目，集成技能展示、项目卡片，以及多人实时对战五子棋与拉斯维加斯，并带用户认证与访问统计。
 
 ## 功能特性
 
 - **个人主页** — 个人信息、技术栈、项目展示、服务健康监控
 - **五子棋对战** — 多人实时对战，支持观战、AI 对手、悔棋、求和、重开、评论区
+- **拉斯维加斯** — 2–5 人骰子桌游（alea 2012），支持观战、AI 对手、玩家颜色区分、对局战绩
 - **用户系统** — JWT 双 Token 认证（Access + Refresh），注册 / 登录 / 自动续期
 - **访问统计** — 记录访客页面访问，提供总访问量、独立访客数与今日访问数
-- **实时通信** — WebSocket 驱动五子棋房间状态同步
+- **实时通信** — WebSocket 驱动五子棋 / 拉斯维加斯房间状态同步
 
 ## 快速部署（Release 包）
 
@@ -54,7 +55,9 @@
 │       └── views/
 │           ├── Home.vue          # 首页
 │           ├── Auth.vue          # 登录/注册
-│           └── Gomoku.vue        # 五子棋对战
+│           ├── Gomoku.vue        # 五子棋对战
+│           ├── LasVegas.vue      # 拉斯维加斯对战
+│           └── LasVegasRulesPage.vue  # 拉斯维加斯规则页
 │
 ├── backend/                      # Spring Boot 后端
 │   ├── pom.xml
@@ -72,9 +75,11 @@
 │       │       ├── service/      # 用户服务
 │       │       ├── repository/   # JdbcTemplate 数据访问层
 │       │       ├── model/        # 实体模型
-│       │       └── game/         # 五子棋引擎 / AI / WebSocket 房间
+│       │       ├── game/         # 五子棋引擎 / AI / WebSocket 房间
+│       │       └── lasvegas/     # 拉斯维加斯引擎 / 结算 / AI / WebSocket 房间（独立架构）
 │       └── test/java/com/homepage/  # JUnit 5 单元测试
 │
+├── docs/                         # 拉斯维加斯设计文档与 AI 对局记录
 └── projectStructure.md           # 项目结构文档
 ```
 
@@ -113,22 +118,25 @@ npm run build
 ```bash
 cd backend
 mvn package -DskipTests
-java -jar target/homepage-backend-1.1.0.jar
+java -jar target/homepage-backend-1.2.0.jar
 ```
 
 启动后访问：**http://localhost:8080**
 
 ### 数据库初始化
 
-全部 2 张表由 `DataInitializer` 在应用首次启动时自动创建（`CREATE TABLE IF NOT EXISTS`，全新数据库可直接启动），无需手动执行建表脚本：
+全部 4 张表由 `DataInitializer` 在应用首次启动时自动创建（`CREATE TABLE IF NOT EXISTS`，全新数据库可直接启动），无需手动执行建表脚本：
 
 | 表名 | 用途 |
 |------|------|
 | `users` | 用户表（用户名/密码/角色/启用状态） |
 | `visitor_log` | 访问记录（ip, page） |
+| `lasvegas_match` | 拉斯维加斯对局（局号、时间、人数） |
+| `lasvegas_player` | 拉斯维加斯对局中的每位玩家成绩（金额、钞票数、是否获胜） |
 
 - 用户角色：`USER` 普通用户 / `ADMIN` 管理员；配置了 `app.admin.username` / `app.admin.password` 时，若该用户不存在会自动创建 ADMIN 账号
 - Refresh Token 为自包含 JWT，不落库；五子棋对局状态保存在服务端内存中
+- 拉斯维加斯**对局过程不入库**，仅在整局结束时写入 `lasvegas_match` + `lasvegas_player`；AI 的行 `user_id` 为 `NULL`，因此不会出现在任何人的战绩表里
 
 ## 前端页面路由
 
@@ -137,6 +145,8 @@ java -jar target/homepage-backend-1.1.0.jar
 | `/` | Home | 首页（个人信息/技能/项目/功能入口） |
 | `/login` | Auth | 登录/注册（已登录自动跳回首页） |
 | `/gomoku` | Gomoku | 五子棋对战 |
+| `/las-vegas` | LasVegas | 拉斯维加斯对战 |
+| `/las-vegas/rules` | LasVegasRulesPage | 拉斯维加斯规则页（无需登录） |
 
 路由守卫：已登录用户访问 `/login` 自动跳回首页。除 Home 外所有页面均懒加载。
 
@@ -167,11 +177,19 @@ java -jar target/homepage-backend-1.1.0.jar
 | `/api/visitor/ping` | POST | 记录访问（同会话去重） |
 | `/api/visitor/count` | GET | 总访问 / 独立访客 / 今日访问 |
 
+### 拉斯维加斯接口
+
+| 接口 | 方法 | 说明 |
+|------|------|------|
+| `/api/lasvegas/matches` | GET | 当前登录用户参与过的对局战绩（需登录，`?limit=` 默认 20，上限 100） |
+| `/api/lasvegas/stats` | GET | 当前登录用户的汇总统计（局数 / 胜场 / 累计金额，需登录） |
+
 ### WebSocket
 
 | 路径 | 说明 |
 |------|------|
 | `/ws/game` | 五子棋房间实时通信 |
+| `/ws/lasvegas` | 拉斯维加斯房间实时通信（可用 `?room=CODE` 指定房间，默认 `default`） |
 
 ## 认证系统
 
@@ -189,6 +207,18 @@ java -jar target/homepage-backend-1.1.0.jar
 - 悔棋（撤回双方各一步）、求和、重开、认输
 - 评论区保留最近 10 条消息，观战者与玩家均可发言
 
+## 拉斯维加斯游戏功能
+
+alea 2012 年出版的骰子桌游（Rüdiger Dorn 设计），本实现为 **2–5 人**单房间对战：
+
+- **玩法**：40 颗骰子（8 颗 × 5 色）、6 个赌场（1–6 点）、54 张钞票、共 4 轮。每轮掷出全部剩余骰子，选定一个点数把该点数的**全部**骰子押进对应赌场；结算时并列的骰子组整体作废，其余按骰子数降序领取钞票
+- **玩家颜色**：加入时固定一种颜色（红/蓝/绿/橙/紫），自己和他人都能看到，赌场里的骰子也按颜色区分归属
+- **观战**：任何打开页面的人都能实时围观对局（含当前投骰者的点数），但只有参赛者能操作；大厅有空位时观战者可一键入座
+- **AI 对手**：房主可添加电脑对手（稳健 / 激进 / 赌徒三种性格），基于蒙特卡洛推演 + 风险偏好决策；真人中途退出时座位由 AI 托管，重连后交还
+- **战绩表**：整局结束后写入数据库，登录玩家可查看自己参与过的对局
+- **规则页**：`/las-vegas/rules` 提供完整规则说明，无需登录即可查看
+- 详细设计见 [docs/las-vegas-design-outline.md](docs/las-vegas-design-outline.md)、[docs/las-vegas-ai.md](docs/las-vegas-ai.md)
+
 ## 访问统计
 
 - 前端 `sessionStorage` 标记 + 后端 IP 去重，同会话不重复计数
@@ -199,18 +229,21 @@ java -jar target/homepage-backend-1.1.0.jar
 1. **新增功能页面**：需在 `App.vue` 顶部导航栏添加跳转链接，并在 `Home.vue` 功能入口区添加按钮
 2. **编译前**：先停止正在运行的 Java 后端进程，防止内存不足（JVM 编译 + 运行双进程）
 3. **前端懒加载**：除 Home 外所有页面组件均使用动态 `import()`，减小首屏体积
-4. **WebSocket**：五子棋端点注册在 `/ws/game`
+4. **WebSocket**：五子棋端点注册在 `/ws/game`，拉斯维加斯注册在 `/ws/lasvegas`
 5. **私密配置**：真实凭据只放 `application-local.yml`（已 gitignore）或环境变量，勿提交到仓库
-6. **发版**：打 tag（如 `v1.0.1`）并推送，GitHub Actions 自动构建前端+后端并发布 Release（jar + 启动脚本 bundle）
+6. **发版**：打 tag（如 `v1.2.0`）并推送，GitHub Actions 自动构建前端+后端并发布 Release（jar + 启动脚本 bundle）
+7. **架构隔离**：拉斯维加斯是**完全独立**的架构（`com.homepage.lasvegas`），五子棋的 `GameRoom` 不受影响，两者不要互相耦合
 
 ## 测试
 
-核心纯逻辑配有 JUnit 5 单元测试（`backend/src/test`），覆盖五子棋胜负判定与 AI 攻防、JWT 签发/解析/防篡改。push 与 PR 时 CI 自动运行，也可手动执行：
+核心纯逻辑配有 JUnit 5 单元测试（`backend/src/test`），覆盖五子棋胜负判定与 AI 攻防、拉斯维加斯规则引擎与 AI 决策、JWT 签发/解析/防篡改。push 与 PR 时 CI 自动运行，也可手动执行：
 
 ```bash
 cd backend
 mvn test
 ```
+
+> 注意：Surefire 2.22.2 的 `-Dtest=` **匹配不到 `@Nested` 内部类**，指定单个测试类可能显示 `Tests run: 0`，请跑全量 `mvn test`。
 
 ## License
 

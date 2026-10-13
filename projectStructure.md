@@ -1,6 +1,6 @@
 # 项目结构总览 (projectStructure.md)
 
-> 基于 **Spring Boot 2.7 + Vue 3** 的全栈个人主页项目，集成技能展示、项目卡片，以及多人实时对战五子棋。
+> 基于 **Spring Boot 2.7 + Vue 3** 的全栈个人主页项目，集成技能展示、项目卡片，以及多人实时对战五子棋与拉斯维加斯。
 
 ---
 
@@ -50,7 +50,14 @@
 │       └── views/                  # 页面组件
 │           ├── Home.vue            # 首页
 │           ├── Auth.vue            # 登录/注册页
-│           └── Gomoku.vue          # 五子棋游戏
+│           ├── Gomoku.vue          # 五子棋游戏
+│           ├── LasVegas.vue        # 拉斯维加斯游戏
+│           └── LasVegasRulesPage.vue  # 拉斯维加斯规则页
+│
+├── docs/                           # 拉斯维加斯设计文档
+│   ├── las-vegas-design-outline.md # 设计大纲 (规则/协议/前端/测试)
+│   ├── las-vegas-ai.md             # AI 决策模型说明
+│   └── las-vegas-ai-match-record.md # 真实引擎跑出的对局记录
 │
 └── backend/                        # Spring Boot 后端
     ├── pom.xml                     # Maven 依赖
@@ -67,7 +74,7 @@
             │   ├── JwtAuthenticationFilter.java  # JWT 认证过滤器
             │   ├── JwtUtil.java            # JWT 生成/解析工具 (双 Token)
             │   ├── WebMvcConfig.java       # CORS + 静态资源配置
-            │   ├── WebSocketConfig.java    # WebSocket 端点注册 (/ws/game)
+            │   ├── WebSocketConfig.java    # WebSocket 端点注册 (/ws/game, /ws/lasvegas)
             │   ├── DataInitializer.java    # 启动初始化 (全部建表 + 管理员初始化，凭据来自配置)
             │   └── GlobalExceptionHandler.java  # 全局异常处理
             ├── controller/                 # 控制器层 (REST API)
@@ -82,37 +89,54 @@
             ├── model/                      # 数据模型
             │   ├── User.java               # 用户实体
             │   └── VisitorRecord.java      # 访问记录实体 (对应表 visitor_log)
-            └── game/                       # 游戏引擎 (WebSocket)
-                ├── GameRoom.java           # 五子棋房间 / WebSocket 消息处理
-                ├── GomokuGame.java         # 五子棋引擎 (棋盘/落子/胜负)
-                ├── GomokuAI.java           # 五子棋 AI (权重评估算法)
-                └── GameWebSocketHandler.java # WebSocket 握手处理器
+            ├── game/                       # 五子棋引擎 (WebSocket)
+            │   ├── GameRoom.java           # 五子棋房间 / WebSocket 消息处理
+            │   ├── GomokuGame.java         # 五子棋引擎 (棋盘/落子/胜负)
+            │   ├── GomokuAI.java           # 五子棋 AI (权重评估算法)
+            │   └── GameWebSocketHandler.java # WebSocket 握手处理器
+            └── lasvegas/                   # 拉斯维加斯 (完全独立的架构)
+                ├── LasVegasGame.java       # 规则引擎 (骰子/赌场/轮次/守恒)
+                ├── LasVegasBanknotes.java  # 钞票堆 (54 张 / 2,500,000)
+                ├── LasVegasPayout.java     # 单轮结算 (平手作废 + 降序发钞)
+                ├── CasinoPayout.java       # 单个赌场的结算结果
+                ├── LasVegasScoring.java    # 最终排名 (金额 → 张数 → 并列)
+                ├── LasVegasAi.java         # AI 决策 (蒙特卡洛推演 + 风险偏好)
+                ├── LasVegasRoom.java       # 房间 / WebSocket 消息处理 / 托管
+                ├── LasVegasRoomRegistry.java # 房间注册表 (为多房间预留)
+                ├── LasVegasWebSocketHandler.java # WebSocket 握手处理器
+                ├── controller/LasVegasController.java  # 战绩 API (/api/lasvegas/*)
+                ├── model/                  # 对局与玩家成绩模型
+                └── repository/LasVegasRepository.java  # 战绩落库 (表 lasvegas_*)
 
     backend/src/test/java/com/homepage/   # 单元测试 (JUnit 5 + AssertJ)
         ├── game/GomokuGameTest.java      # 五子棋引擎: 胜负判定/非法落子/悔棋/重开
         ├── game/GomokuAITest.java        # 五子棋 AI: 开局/成五/封堵/攻防优先级
-        └── config/JwtUtilTest.java       # JWT: 签发解析往返/双密钥隔离/防篡改
+        ├── config/JwtUtilTest.java       # JWT: 签发解析往返/双密钥隔离/防篡改
+        └── lasvegas/                     # 拉斯维加斯: 引擎/结算/守恒/AI/房间与观战
 ```
 
 ---
 
 ## 三、数据库表
 
-全部 2 张表由 `DataInitializer` 在应用启动时自动创建（`CREATE TABLE IF NOT EXISTS`，全新数据库可直接启动）：
+全部 4 张表由 `DataInitializer` 在应用启动时自动创建（`CREATE TABLE IF NOT EXISTS`，全新数据库可直接启动）：
 
 | 表名 | 用途 | 访问层 |
 |------|------|--------|
 | `users` | 用户表（用户名/密码/角色/启用状态/登录失败次数） | `UserRepository` |
 | `visitor_log` | 访问记录 (id, ip, page, created_at) | `VisitorRepository` |
+| `lasvegas_match` | 拉斯维加斯对局 (局号、时间、人数) | `LasVegasRepository` |
+| `lasvegas_player` | 对局中的玩家成绩 (match_id, user_id, username, seat, money, banknotes, is_winner) | `LasVegasRepository` |
 
 **建表与初始化**（`DataInitializer`，应用启动时先建表再初始化管理员）：
-- `CREATE TABLE IF NOT EXISTS` 创建全部 2 张表，统一 utf8mb4_general_ci
+- `CREATE TABLE IF NOT EXISTS` 创建全部 4 张表，统一 utf8mb4_general_ci
 - 若配置了 `app.admin.username` / `app.admin.password`（环境变量 `ADMIN_USERNAME` / `ADMIN_PASSWORD` 或 gitignore 掉的 `application-local.yml`）且该用户不存在，自动创建 ADMIN 角色管理员；未配置则跳过并告警
 
 **其他要点**：
 - 数据库：MariaDB `homepage`，字符集 utf8mb4
 - Refresh Token 为自包含 JWT（签名校验即信任），**不落库**，无 refresh_tokens 表
 - 五子棋对战状态**不入库**：保存在服务端内存中
+- 拉斯维加斯对局过程同样**不入库**，只在整局结束时写入 `lasvegas_match` + `lasvegas_player`；AI 与托管座位的 `user_id` 为 `NULL`，故不会出现在任何人的战绩表里
 
 ### 用户角色
 - `USER` — 普通用户
@@ -147,11 +171,19 @@
 | POST | `/api/visitor/ping` | 记录访问 (去重) |
 | GET | `/api/visitor/count` | 获取访问统计 (总访问/独立访客/今日) |
 
+### 拉斯维加斯战绩接口 (`LasVegasController`，需登录)
+
+| 方法 | 路径 | 说明 |
+|------|------|------|
+| GET | `/api/lasvegas/matches` | 我参与过的对局战绩 (`?limit=` 默认 20，上限 100) |
+| GET | `/api/lasvegas/stats` | 我的汇总统计 (局数/胜场/累计金额) |
+
 ### WebSocket
 
 | 路径 | 说明 |
 |------|------|
 | `/ws/game` | 五子棋实时通信（房间制） |
+| `/ws/lasvegas` | 拉斯维加斯实时通信（可用 `?room=CODE`，默认 `default`） |
 
 ---
 
@@ -162,6 +194,8 @@
 | `/` | `Home.vue` | Home | 首页 (个人介绍/技能/项目/功能入口) | `{ title: 'chycal 的个人首页' }` |
 | `/login` | `Auth.vue` (懒加载) | Auth | 登录/注册 | `{ title: '登录 - chycal', guest: true }` |
 | `/gomoku` | `Gomoku.vue` (懒加载) | Gomoku | 五子棋对战 | `{ title: '五子棋 - chycal' }` |
+| `/las-vegas` | `LasVegas.vue` (懒加载) | LasVegas | 拉斯维加斯对战 | `{ title: '拉斯维加斯 - chycal' }` |
+| `/las-vegas/rules` | `LasVegasRulesPage.vue` (懒加载) | LasVegasRules | 拉斯维加斯规则页 | 规则说明，无需登录 |
 
 路由守卫行为：
 - `guest: true` → 已登录用户访问时重定向到 `/`
@@ -175,7 +209,7 @@
 - 个人信息展示 (头像、姓名、简介)
 - 技能标签云
 - 项目卡片列表
-- 功能快速入口 (五子棋)
+- 功能快速入口 (五子棋、拉斯维加斯)
 
 ### 2. 五子棋 (`Gomoku.vue`)
 - WebSocket (`/ws/game`) 实时通信，房间制多人对战
@@ -185,7 +219,21 @@
 - 悔棋 (撤回双方各一步)、求和、重开、认输
 - 评论区 (最近 10 条消息，观战者与玩家均可发言)
 
-### 3. 认证系统
+### 3. 拉斯维加斯 (`LasVegas.vue`)
+
+alea 2012 年出版的骰子桌游（Rüdiger Dorn 设计），**2–5 人**单房间对战：
+
+- WebSocket (`/ws/lasvegas`) 实时通信，4 轮定胜负（40 颗骰子 / 6 个赌场 / 54 张钞票）
+- **玩家颜色**：加入时固定一种颜色（红蓝绿橙紫），自己与他人都可见，赌场骰子按颜色区分归属
+- **观战**：任何进入页面的人都能实时围观（含当前投骰者的点数），但只有参赛者能操作；
+  观战者不进 `members`，权限边界由数据结构保证；大厅有空位时可一键入座
+- **AI 对手**：房主可添加（稳健/激进/赌徒），蒙特卡洛推演 + 风险偏好决策
+- **托管**：真人中途退出/掉线时座位由 AI 代打，重连后交还控制权
+- **聊天**：自动跟随最新消息，上滑查看历史时提示「有新消息 ↓」
+- **战绩表**：整局结束落库，登录玩家可查看
+- 规则页 `/las-vegas/rules`；设计细节见 `docs/las-vegas-*.md`
+
+### 4. 认证系统
 - JWT 双 Token 机制: Access Token (短期) + Refresh Token (长期，自包含 JWT，不落库)
 - `authFetch` 自动处理 Token 过期刷新
 - 登录状态通过 `localStorage` + `CustomEvent('auth-change')` 跨组件同步
@@ -202,6 +250,8 @@
 | `backend/pom.xml` | Spring Boot 2.7.18, Spring Security, WebSocket, jjwt 0.11.5, mariadb-java-client 2.7.9 |
 | `backend/src/main/resources/application.yml` | 端口 8080, 数据源（凭据走环境变量占位符）, `spring.config.import` 加载本地私密配置 |
 | `backend/application-local.example.yml` | 私密配置模板：复制为 `application-local.yml` 填入真实值（已 gitignore） |
+| `docs/las-vegas-design-outline.md` | 拉斯维加斯设计大纲（规则、WebSocket 协议、前端、测试） |
+| `docs/las-vegas-ai.md` | 拉斯维加斯 AI 决策模型说明 |
 | `.github/workflows/release.yml` | 打 `v*` tag 触发：npm 构建前端 → mvn 打包 → jar + 启动脚本打成 bundle 发 GitHub Release |
 | `.github/workflows/ci.yml` | push(main)/PR 触发：`mvn test` 后端测试 + 前端构建检查 |
 
@@ -218,12 +268,13 @@
    # 后端构建
    cd backend && mvn package -DskipTests -q
    # 启动
-   java -jar target/homepage-backend-1.1.0.jar
+   java -jar target/homepage-backend-1.2.0.jar
    ```
 4. **前端懒加载**: 除 Home 外所有页面组件均使用动态 `import()`，减小首屏体积。
 5. **认证流程**: 需要认证的 API 由 Spring Security + `JwtAuthenticationFilter` 保护（默认规则 `/api/**` 需认证），前端使用 `authFetch` 自动附加/刷新 Bearer Token。
 6. **访客统计去重**: 前端用 `sessionStorage` 标记 + 后端 IP 去重，同会话不重复计数。
-7. **WebSocket 端点**: 注册在 `/ws/game`（五子棋），`SecurityConfig` 放行 `/ws/**`。
+7. **WebSocket 端点**: 注册在 `/ws/game`（五子棋）与 `/ws/lasvegas`（拉斯维加斯），`SecurityConfig` 放行 `/ws/**`。
 8. **私密配置**: 数据库凭据与管理员账号只放 `application-local.yml`（已 gitignore）或环境变量，不写入代码库。
-9. **发版流程**: 更新版本后打 tag（`v1.0.x`）推送，GitHub Actions 自动构建并发布 Release；`deploy/` 目录内容会打进发布包。
-10. **测试**: 核心纯逻辑有 JUnit 5 单元测试（五子棋引擎与 AI、JWT 工具，位于 `backend/src/test`），push/PR 时 CI 自动运行；改动对应逻辑请同步维护测试。
+9. **发版流程**: 更新版本后打 tag（`v1.x.x`）推送，GitHub Actions 自动构建并发布 Release；`deploy/` 目录内容会打进发布包。
+10. **测试**: 核心纯逻辑有 JUnit 5 单元测试（五子棋引擎与 AI、拉斯维加斯引擎/结算/AI/房间、JWT 工具，位于 `backend/src/test`），push/PR 时 CI 自动运行；改动对应逻辑请同步维护测试。注意 Surefire 2.22.2 的 `-Dtest=` 匹配不到 `@Nested` 内部类，请跑全量 `mvn test`。
+11. **架构隔离**: 拉斯维加斯位于 `com.homepage.lasvegas`，是**完全独立**的架构，不复用也不修改五子棋的 `GameRoom`；两者仅在 `WebSocketConfig` 注册端点、`SecurityConfig` 放行路径处有交集。
