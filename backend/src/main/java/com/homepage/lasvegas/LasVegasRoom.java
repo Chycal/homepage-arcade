@@ -953,11 +953,18 @@ public class LasVegasRoom {
     // 状态广播
     // ------------------------------------------------------------------
 
-    /** 向房间里的每个连接（在线成员 + 观战者）发送同一个事件 */
-    private void broadcast(Map<String, Object> payload) {
+    /**
+     * 当前还收得到消息的所有连接：在线成员 + 仍未关闭的观战者。
+     *
+     * 顺带把已经关掉的观战者从 map 里摘掉——它们再也收不到消息，而这里是唯一
+     * 会定期遍历它们的地方。状态广播和瞬时事件（番茄）必须用同一套「谁还在线」
+     * 的判断，所以抽出来共用，避免两处各写一遍后慢慢走样。
+     */
+    private List<WebSocketSession> reachableSessions() {
+        List<WebSocketSession> sessions = new ArrayList<>();
         for (Member member : members.values()) {
             if (member.connected && member.session != null) {
-                safeSend(member.session, payload);
+                sessions.add(member.session);
             }
         }
         for (Spectator spectator : new ArrayList<>(spectators.values())) {
@@ -966,24 +973,22 @@ public class LasVegasRoom {
                 spectators.remove(session == null ? "" : session.getId());
                 continue;
             }
+            sessions.add(session);
+        }
+        return sessions;
+    }
+
+    /** 向房间里的每个连接（在线成员 + 观战者）发送同一个瞬时事件 */
+    private void broadcast(Map<String, Object> payload) {
+        for (WebSocketSession session : reachableSessions()) {
             safeSend(session, payload);
         }
     }
 
     private void broadcastState() {
         pruneTomatoThrottle();
-        for (Member member : members.values()) {
-            if (member.connected && member.session != null) {
-                sendState(member.session);
-            }
-        }
-        // 观战者：任何进入网页的人都能看到房间里的对战
-        for (Spectator spectator : new ArrayList<>(spectators.values())) {
-            WebSocketSession session = spectator.session;
-            if (session == null || !session.isOpen()) {
-                spectators.remove(session == null ? "" : session.getId());
-                continue;
-            }
+        // 观战者也在这里：任何进入网页的人都能看到房间里的对战
+        for (WebSocketSession session : reachableSessions()) {
             sendState(session);
         }
     }
