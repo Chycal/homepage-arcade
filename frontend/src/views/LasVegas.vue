@@ -835,7 +835,17 @@ export default {
 
 <style scoped>
 .lv-page {
-  max-width: 960px;
+  /* 正文列宽度（.lv-page 的 border box 宽）。宽屏侧栏要按它定位，
+     所以抽成变量：改宽度只需动这一处，侧栏会自动跟着走 */
+  --lv-content: 960px;
+  /* 单块侧栏的宽度 = 头像槽 62px + 左右内边距 8px×2 */
+  --lv-rail-width: 78px;
+  /* 侧栏与正文之间留的空隙 */
+  --lv-rail-gap: 12px;
+  /* 正文左右各让出一条走廊摆侧栏，走廊宽 = 侧栏 + 空隙 */
+  --lv-rail-gutter: calc(var(--lv-rail-width) + var(--lv-rail-gap));
+
+  max-width: var(--lv-content);
   margin: 0 auto;
   padding: 20px 16px 60px;
   background: #f7f5f0;
@@ -922,8 +932,15 @@ export default {
 
 /* ===================== 玩家头像两侧栏 ===================== */
 /*
- * 宽屏：左右两列固定在视口两侧，页面留出内边距避让，头像不遮挡对局内容。
- * 窄屏：降级为顶部一条横向滚动带，左右两栏各自贴住一侧（见文件末尾的 @media）。
+ * 宽屏：头像贴在正文两侧，而不是贴屏幕边缘。
+ *
+ * 早先两栏是 `position: fixed; left: 10px / right: 10px`，直接钉在视口边缘。
+ * 正文列最宽只有 960px 且居中，于是在 1920px 的显示器上，头像离正文有 400 多像素，
+ * 视线要从中间横跨半个屏幕才能找到人。现在两栏改为按正文列的外沿定位：
+ * `50% - var(--lv-content) / 2` 正好是居中正文列的左边框，两栏都以它为基准，
+ * 于是头像与正文之间恒留 var(--lv-rail-gap)，左右对称，屏幕越宽侧栏反而越靠中间。
+ *
+ * 窄屏：不启用固定定位，降级为顶部两条可横向滚动的头像带（见文件末尾的 @media）。
  */
 .lv-rails {
   display: contents;
@@ -1086,11 +1103,13 @@ export default {
   font-weight: 600;
 }
 
-/* 宽屏才把两侧栏固定到视口边缘，避免中等宽度下压住正文 */
+/* 宽屏：侧栏摆进正文自己的左右走廊，头像贴着正文，不再钉在视口边缘 */
 @media (min-width: 1100px) {
   .lv-page {
-    padding-left: 92px;
-    padding-right: 92px;
+    /* 正文左右各让出一条走廊摆侧栏；走廊宽 = 侧栏 + 空隙，
+       于是侧栏既不会压住正文，正文也不必为了躲侧栏而缩太多 */
+    padding-left: var(--lv-rail-gutter);
+    padding-right: var(--lv-rail-gutter);
   }
 
   .lv-rails {
@@ -1101,6 +1120,8 @@ export default {
     position: fixed;
     top: 50%;
     transform: translateY(-50%);
+    /* 定宽 = 头像槽 62px + 左右内边距 8px×2，与 --lv-rail-width 对应 */
+    width: var(--lv-rail-width);
     max-height: 86vh;
     overflow-y: auto;
     /* 上下留够：🍅 按钮和 AI 角标都用负偏移挂在头像外沿，
@@ -1108,12 +1129,20 @@ export default {
     padding: 12px 8px;
   }
 
+  /*
+   * 两栏各自贴住正文列的外沿，而不是贴视口边缘。
+   *
+   * 正文列最宽 960px 且水平居中，所以「视口中心 - 半个正文列宽」正好就是
+   * 正文列的左边缘，也就是 .lv-page 左边框所在的位置；两栏都按它定位，
+   * 左右天然对称，且屏幕越宽、侧栏反而越往中间靠（而不是被推向两端）。
+   * 侧栏宽 78px、走廊宽 90px，于是侧栏与正文之间稳定留出 12px 空隙。
+   */
   .lv-rail-left {
-    left: 10px;
+    left: calc(50% - var(--lv-content) / 2);
   }
 
   .lv-rail-right {
-    right: 10px;
+    right: calc(50% - var(--lv-content) / 2);
   }
 }
 
