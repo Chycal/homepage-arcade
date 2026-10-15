@@ -112,7 +112,7 @@
         ├── game/GomokuGameTest.java      # 五子棋引擎: 胜负判定/非法落子/悔棋/重开
         ├── game/GomokuAITest.java        # 五子棋 AI: 开局/成五/封堵/攻防优先级
         ├── config/JwtUtilTest.java       # JWT: 签发解析往返/双密钥隔离/防篡改
-        └── lasvegas/                     # 拉斯维加斯: 引擎/结算/守恒/AI/房间与观战
+        └── lasvegas/                     # 拉斯维加斯: 引擎/结算/守恒/AI/房间与观战/扔番茄
 ```
 
 ---
@@ -276,5 +276,5 @@ alea 2012 年出版的骰子桌游（Rüdiger Dorn 设计），**2–5 人**单�
 7. **WebSocket 端点**: 注册在 `/ws/game`（五子棋）与 `/ws/lasvegas`（拉斯维加斯），`SecurityConfig` 放行 `/ws/**`。
 8. **私密配置**: 数据库凭据与管理员账号只放 `application-local.yml`（已 gitignore）或环境变量，不写入代码库。
 9. **发版流程**: 更新版本后打 tag（`v1.x.x`）推送，GitHub Actions 自动构建并发布 Release；`deploy/` 目录内容会打进发布包。
-10. **测试**: 核心纯逻辑有 JUnit 5 单元测试（五子棋引擎与 AI、拉斯维加斯引擎/结算/AI/房间、JWT 工具，位于 `backend/src/test`），push/PR 时 CI 自动运行；改动对应逻辑请同步维护测试。注意 Surefire 2.22.2 的 `-Dtest=` 匹配不到 `@Nested` 内部类，请跑全量 `mvn test`。
+10. **测试**: 核心纯逻辑有 JUnit 5 单元测试（五子棋引擎与 AI、拉斯维加斯引擎/结算/AI/房间/观战/扔番茄、JWT 工具，共 135 个，位于 `backend/src/test`），push/PR 时 CI 自动运行；改动对应逻辑请同步维护测试。注意 Surefire 2.22.2 的 `-Dtest=` 匹配不到 `@Nested` 内部类，请跑全量 `mvn test`。
 11. **架构隔离**: 拉斯维加斯位于 `com.homepage.lasvegas`，是**完全独立**的架构，不复用也不修改五子棋的 `GameRoom`；两者仅在 `WebSocketConfig` 注册端点、`SecurityConfig` 放行路径处有交集。

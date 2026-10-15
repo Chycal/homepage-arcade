@@ -39,6 +39,14 @@ public class LasVegasRoom {
     private static final int MAX_MEMBERS = 5;
 
     /**
+     * 同一个人两次「扔番茄」之间的最小间隔（毫秒）。
+     *
+     * 番茄是纯表情，不影响对局，但会广播给全房间并触发动画，
+     * 不节流的话一个人狂点就能把别人的屏幕刷满，所以服务端强制限流。
+     */
+    private static final long TOMATO_COOLDOWN_MS = 600;
+
+    /**
      * 玩家颜色（下标即 colorIndex）。
      *
      * 与前端 {@code DICE_COLORS} 保持一致；颜色在「加入大厅」时就固定下来，
@@ -114,6 +122,15 @@ public class LasVegasRoom {
     /** 开局后 座位 -> 成员 key */
     private final List<String> seatOrder = new ArrayList<>();
     private final LinkedList<Map<String, Object>> chat = new LinkedList<>();
+
+    /**
+     * 扔番茄限流：投掷者 key -> 上次投掷时间（{@link System#currentTimeMillis()}）。
+     *
+     * 与聊天不同，番茄是动画事件而不是状态，不能塞进 {@code room_state}：
+     * 状态是「当前是什么样」，动画是「刚刚发生了什么」。所以它单独作为
+     * {@code tomato} 消息广播，前端收到就播一次动画，错过就错过（例如断线期间）。
+     */
+    private final Map<String, Long> lastTomatoAt = new LinkedHashMap<>();
 
     private LasVegasGame game;
     private RoomPhase roomPhase = RoomPhase.LOBBY;
@@ -192,6 +209,7 @@ public class LasVegasRoom {
             scheduleAiTurn();
         }
     }
+
     /**
      * 观战者：只读连接。
      *
@@ -271,6 +289,9 @@ public class LasVegasRoom {
                     break;
                 case "chat":
                     onChat(session, message);
+                    break;
+                case "throw_tomato":
+                    onThrowTomato(session, message);
                     break;
                 case "state":
                     sendState(session);
@@ -776,6 +797,85 @@ public class LasVegasRoom {
         }
     }
 
+    /**
+     * 扔番茄：向房间广播一个「A 把番茄扔向 B」的动画事件。
+     *
+     * 纯表情互动，不改变任何对局状态，所以既不写 {@code room_state} 也不落库。
+     * 成员和观战者都能扔（和聊天一样属于围观互动，不是对局操作），但有三条约束：
+     * <ol>
+     *   <li>必须已经在房间里（成员或观战者），否则无从谈起；</li>
+     *   <li>目标必须是本局的一名玩家（{@code target} 是成员 key），不能凭空捏造；</li>
+     *   <li>同一个人 {@link #TOMATO_COOLDOWN_MS} 内只能扔一次，防止刷屏。</li>
+     * </ol>
+     */
+    private void onThrowTomato(WebSocketSession session, Map<String, Object> message) {
+        synchronized (this) {
+            String fromKey = sessionToKey.get(session.getId());
+            Spectator fromSpectator = spectators.get(session.getId());
+            if (fromKey == null && fromSpectator == null) {
+                sendError(session, "请先加入房间");
+                return;
+            }
+            // 投掷者的稳定标识：成员用自己的 key；观战者不在 members 里没有 key，
+            // 借用 sessionId（限流只需要一个房间内唯一的值）。
+            String throwerId = fromKey != null ? fromKey : "s:" + session.getId();
+            long now = System.currentTimeMillis();
+            Long last = lastTomatoAt.get(throwerId);
+            if (last != null && now - last < TOMATO_COOLDOWN_MS) {
+                sendError(session, "番茄扔得太快了，歇口气吧");
+                return;
+            }
+
+            String targetKey = str(message.get("target"));
+            Member target = targetKey == null ? null : members.get(targetKey);
+            if (target == null) {
+                sendError(session, "找不到要扔的玩家");
+                return;
+            }
+            if (targetKey.equals(throwerId)) {
+                sendError(session, "不能往自己脸上扔番茄");
+                return;
+            }
+            lastTomatoAt.put(throwerId, now);
+
+            Map<String, Object> event = new LinkedHashMap<>();
+            event.put("type", "tomato");
+            event.put("from", throwerId);
+            event.put("fromName", displayNameOf(throwerId));
+            event.put("to", targetKey);
+            event.put("toName", target.username);
+            broadcast(event);
+        }
+    }
+
+    /** 投掷者显示名：成员用用户名，观战者用其昵称或「观众」 */
+    private String displayNameOf(String id) {
+        if (id.startsWith("s:")) {
+            Spectator spectator = spectators.get(id.substring(2));
+            if (spectator == null) {
+                return "观众";
+            }
+            return spectator.username == null || spectator.username.isEmpty() ? "观众" : spectator.username;
+        }
+        return usernameOf(id);
+    }
+
+    /**
+     * 清掉已经离开房间的人的限流记录。
+     *
+     * 房间是长期存在的（默认房间永不销毁），而 {@link #lastTomatoAt} 的 key 包含
+     * 游客 ID 和观战者 sessionId —— 这些都会不断产生新值。不定期清理就是内存泄漏。
+     * 放在状态广播里顺带做，成本只是遍历一个很小的 map。
+     */
+    private void pruneTomatoThrottle() {
+        lastTomatoAt.keySet().removeIf(id -> {
+            if (id.startsWith("s:")) {
+                return !spectators.containsKey(id.substring(2));
+            }
+            return !members.containsKey(id);
+        });
+    }
+
     /** 校验：对局中、已加入、轮到自己、且已投骰（choose 另行校验） */
     private String requirePlayingTurn(WebSocketSession session) {
         if (roomPhase != RoomPhase.PLAYING || game == null) {
@@ -853,7 +953,25 @@ public class LasVegasRoom {
     // 状态广播
     // ------------------------------------------------------------------
 
+    /** 向房间里的每个连接（在线成员 + 观战者）发送同一个事件 */
+    private void broadcast(Map<String, Object> payload) {
+        for (Member member : members.values()) {
+            if (member.connected && member.session != null) {
+                safeSend(member.session, payload);
+            }
+        }
+        for (Spectator spectator : new ArrayList<>(spectators.values())) {
+            WebSocketSession session = spectator.session;
+            if (session == null || !session.isOpen()) {
+                spectators.remove(session == null ? "" : session.getId());
+                continue;
+            }
+            safeSend(session, payload);
+        }
+    }
+
     private void broadcastState() {
+        pruneTomatoThrottle();
         for (Member member : members.values()) {
             if (member.connected && member.session != null) {
                 sendState(member.session);
@@ -975,6 +1093,9 @@ public class LasVegasRoom {
             entry.put("isHost", member.key.equals(host));
             entry.put("ai", member.ai);
             entry.put("autopilot", member.autopilot);
+            // 未开局时人手 8 颗；也下发这个字段，前端就能用同一段模板显示「剩余骰子」，
+            // 不必为大厅和牌局各写一套
+            entry.put("diceLeft", LasVegasGame.DICE_PER_PLAYER);
             if (member.ai) {
                 entry.put("aiStyle", member.aiStyle.name());
                 entry.put("aiStyleLabel", member.aiStyle.getLabel());

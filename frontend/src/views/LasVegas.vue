@@ -33,6 +33,47 @@
         </span>
       </div>
 
+      <!-- 玩家头像：分列屏幕左右两侧，点别人头像角上的番茄即可扔过去 -->
+      <div class="lv-rails">
+        <div
+          v-for="(group, gi) in playerRails"
+          :key="gi"
+          class="lv-rail"
+          :class="gi === 0 ? 'lv-rail-left' : 'lv-rail-right'"
+          :aria-label="gi === 0 ? '左侧玩家' : '右侧玩家'"
+        >
+          <div v-for="p in group" :key="p.key" class="lv-avatar-slot" :data-avatar="p.key">
+            <div
+              class="lv-avatar"
+              :class="{
+                me: p.key === state.you,
+                acting: p.key === state.currentPlayerKey && phase === 'PLAYING',
+                offline: !p.connected && !p.ai,
+                splat: splats.includes(p.key)
+              }"
+              :style="{ '--ring': colorOfPlayer(p) }"
+              :title="avatarTitle(p)"
+            >
+              <span class="lv-avatar-face">{{ initial(p) }}</span>
+              <span class="lv-avatar-dice" :class="{ zero: p.diceLeft === 0 }">
+                {{ p.diceLeft }}<i>🎲</i>
+              </span>
+              <span v-if="p.ai || p.autopilot" class="lv-avatar-ai">AI</span>
+              <span v-if="splats.includes(p.key)" class="lv-avatar-splat">💥</span>
+              <button
+                v-if="p.key !== state.you"
+                type="button"
+                class="lv-avatar-tomato"
+                :title="`向 ${p.username} 扔番茄`"
+                @click.stop="throwTomatoAt(p)"
+              >🍅</button>
+            </div>
+            <span class="lv-avatar-name">{{ p.username }}</span>
+            <span v-if="phase !== 'LOBBY'" class="lv-avatar-money">${{ shortMoney(p.money) }}</span>
+          </div>
+        </div>
+      </div>
+
       <!-- 颜色名册：每个人都能一眼看出自己和别人的颜色 -->
       <div v-if="players.length" class="lv-card lv-legend">
         <div class="lv-legend-me">
@@ -53,6 +94,7 @@
             <span v-if="p.key === state.you" class="lv-legend-tag">我</span>
             <span v-else-if="p.ai" class="lv-legend-tag ai">电脑</span>
             <span v-else-if="p.autopilot" class="lv-legend-tag ai">托管</span>
+            <span class="lv-legend-dice">🎲 {{ p.diceLeft }}</span>
           </span>
         </div>
         <button v-if="state.canJoin" class="lv-btn primary small" @click="joinAsPlayer">
@@ -72,6 +114,9 @@
             <span v-else-if="p.autopilot" class="lv-badge ai-badge">🤖 托管中</span>
             <span v-if="p.key === state.you" class="lv-badge me-badge">我</span>
             <span v-if="!p.connected && !p.autopilot" class="lv-offline">掉线</span>
+            <span class="lv-dice-count" :class="{ zero: p.diceLeft === 0 }">
+              🎲 {{ p.diceLeft }}
+            </span>
             <button
               v-if="p.ai && state.canRemoveAi"
               class="lv-remove-ai"
@@ -152,12 +197,13 @@
               <span class="lv-casino-value">{{ c.value }}</span>
               <span class="lv-casino-name">{{ casinoName(c.value) }}</span>
             </div>
-            <div class="lv-casino-total">${{ money(c.total) }}</div>
+            <!-- 钞票面额是这一格的主角（字大），总额退到下面做小字汇总 -->
             <div class="lv-notes">
               <span v-for="(n, i) in c.banknotes" :key="i" class="lv-note">
                 {{ shortMoney(n) }}
               </span>
             </div>
+            <div class="lv-casino-total">合计 ${{ money(c.total) }}</div>
             <div class="lv-dice-area">
               <span v-if="!c.dice.length" class="lv-empty">暂无骰子</span>
               <span v-for="d in c.dice" :key="d.seat" class="lv-dice"
@@ -236,6 +282,9 @@
               <span v-else-if="p.autopilot" class="lv-badge ai-badge">托管</span>
               <span class="lv-standing-money">${{ money(p.money) }}</span>
               <span class="lv-standing-notes">{{ p.banknotes }} 张</span>
+              <span class="lv-standing-dice" :class="{ zero: p.diceLeft === 0 }">
+                🎲 {{ p.diceLeft }}
+              </span>
             </div>
           </div>
           <p v-if="state.matchId" class="lv-hint">
@@ -402,7 +451,10 @@ export default {
       chatUnread: false,
       chatAtBottom: true,
       // 主动离开后，重连时自动以观战身份进来，不会又悄悄占回座位
-      leftRoom: false
+      leftRoom: false,
+      // 正在被番茄糊脸的玩家 key，短暂高亮后自动移除（纯动画状态，不进 room_state）
+      splats: [],
+      splatTimers: []
     }
   },
   computed: {
@@ -440,6 +492,21 @@ export default {
       return Object.entries(this.state.options || {})
         .map(([value, count]) => ({ value: Number(value), count }))
         .sort((a, b) => a.value - b.value)
+    },
+    /**
+     * 把当前房间的玩家按座位均分成左右两列头像。
+     *
+     * 用「座位奇偶」而不是「前一半/后一半」来分：座位是加入时就固定且按顺序发放的，
+     * 所以同一个人在整局里始终待在屏幕的同一侧，不会因为别人进出而左右横跳。
+     * 大厅阶段同样适用（大厅的 players 里也带 seat）。
+     */
+    playerRails() {
+      const left = []
+      const right = []
+      this.players.forEach(p => {
+        (p.seat % 2 === 0 ? left : right).push(p)
+      })
+      return [left, right]
     }
   },
   mounted() {
@@ -476,6 +543,27 @@ export default {
     seatOf(key) {
       const p = this.players.find(x => x.key === key)
       return p ? p.seat : 0
+    },
+    /**
+     * 头像里的那个字。
+     *
+     * 项目里没有头像字段（User 表也没有），所以沿用首页 Home.vue 的做法：
+     * 取用户名首字符。中文名取首字，英文名取首字母并大写。
+     */
+    initial(player) {
+      const name = (player && player.username) || '?'
+      return name.trim().charAt(0).toUpperCase() || '?'
+    },
+    /** 头像悬停提示：把名字、颜色、剩余骰子和钱一次说清 */
+    avatarTitle(player) {
+      const parts = [player.username]
+      if (player.key === this.state.you) parts.push('（我）')
+      if (player.ai) parts.push('· 电脑')
+      else if (player.autopilot) parts.push('· 托管中')
+      if (!player.connected && !player.ai) parts.push('· 掉线')
+      parts.push(`· 剩余骰子 ${player.diceLeft} 颗`)
+      if (this.phase !== 'LOBBY') parts.push(`· $${this.money(player.money)}`)
+      return parts.join(' ')
     },
     money(value) {
       return Number(value || 0).toLocaleString('en-US')
@@ -543,9 +631,77 @@ export default {
           this.state = msg
           this.afterState()
           break
+        case 'tomato':
+          this.playTomato(msg)
+          break
         case 'error':
           this.showToast(msg.message)
           break
+      }
+    },
+    /**
+     * 播放一次「从 A 飞到 B」的番茄动画。
+     *
+     * 事件里只有 key，没有坐标：头像在两侧栏里的位置随视口和玩家数量变化，
+     * 所以每次投掷都实时量一次两端头像的屏幕位置，动画才不会飞偏。
+     * 动画元素挂在 body 上（position: fixed），因此不受 .lv-page 的 overflow 裁剪。
+     */
+    playTomato(msg) {
+      const from = document.querySelector(`[data-avatar="${CSS.escape(msg.from)}"]`)
+      const to = document.querySelector(`[data-avatar="${CSS.escape(msg.to)}"]`)
+      // 目标不在屏幕上（例如已离开房间）时静默忽略，不打断对局
+      if (!from || !to) return
+
+      const a = from.getBoundingClientRect()
+      const b = to.getBoundingClientRect()
+      const startX = a.left + a.width / 2
+      const startY = a.top + a.height / 2
+      const endX = b.left + b.width / 2
+      const endY = b.top + b.height / 2
+      // 抛物线弧度：距离越远抛得越高，但设上限，避免远距离时飞出屏幕
+      const arc = Math.min(160, Math.abs(endX - startX) * 0.45 + 40)
+
+      const el = document.createElement('div')
+      el.className = 'lv-tomato-fly'
+      el.textContent = '🍅'
+      el.style.left = `${startX}px`
+      el.style.top = `${startY}px`
+      document.body.appendChild(el)
+
+      const frames = []
+      const steps = 28
+      for (let i = 0; i <= steps; i++) {
+        const t = i / steps
+        frames.push({
+          // 水平线性、垂直叠加一条抛物线，看起来就是「扔出去」而不是平移
+          transform: `translate(-50%, -50%) translate(${(endX - startX) * t}px, ${
+            (endY - startY) * t - Math.sin(Math.PI * t) * arc
+          }px) rotate(${t * 720}deg)`,
+          opacity: t > 0.85 ? (1 - t) / 0.15 : 1
+        })
+      }
+
+      const anim = el.animate(frames, { duration: 720, easing: 'linear' })
+      anim.onfinish = () => {
+        el.remove()
+        this.markSplat(msg.to)
+      }
+      anim.oncancel = () => el.remove()
+      // 兜底：动画被浏览器丢弃时也要清掉节点，否则会永久留在页面上
+      setTimeout(() => el.remove(), 1600)
+    },
+    /** 被砸中的人短暂显示 💥 */
+    markSplat(key) {
+      if (!this.splats.includes(key)) this.splats.push(key)
+      const timer = setTimeout(() => {
+        const i = this.splats.indexOf(key)
+        if (i >= 0) this.splats.splice(i, 1)
+      }, 600)
+      this.splatTimers.push(timer)
+    },
+    throwTomatoAt(player) {
+      if (!this.send({ type: 'throw_tomato', target: player.key })) {
+        this.showToast('连接已断开，暂时扔不了')
       }
     },
     // 每次收到新状态后，让聊天记录自动跟随到最新一条
@@ -668,6 +824,11 @@ export default {
     cleanup() {
       clearTimeout(this.reconnectTimer)
       clearTimeout(this.toastTimer)
+      this.splatTimers.forEach(t => clearTimeout(t))
+      this.splatTimers = []
+      this.splats = []
+      // 飞行中的番茄挂在 body 上，组件销毁时要自己收尾
+      document.querySelectorAll('.lv-tomato-fly').forEach(el => el.remove())
       if (this.ws) {
         this.ws.onclose = null
         this.ws.close()
@@ -763,6 +924,233 @@ export default {
 .lv-room {
   margin-left: auto;
   color: #999;
+}
+
+/* ===================== 玩家头像两侧栏 ===================== */
+/*
+ * 宽屏：左右两列固定在视口两侧，页面留出内边距避让，头像不遮挡对局内容。
+ * 窄屏：降级为顶部一条横向滚动带，左右两栏各自贴住一侧（见文件末尾的 @media）。
+ */
+.lv-rails {
+  display: contents;
+}
+
+.lv-rail {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  z-index: 40;
+}
+
+.lv-avatar-slot {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 2px;
+  width: 62px;
+}
+
+.lv-avatar {
+  position: relative;
+  width: 46px;
+  height: 46px;
+  border-radius: 50%;
+  background: #fff;
+  border: 3px solid var(--ring, #999);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 18px;
+  font-weight: 700;
+  color: #444;
+  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.12);
+  transition: transform 0.18s ease, box-shadow 0.18s ease;
+}
+
+.lv-avatar.me {
+  background: #f3f1ff;
+}
+
+/* 轮到谁操作，谁的头像轻微放大 + 外发光，扫一眼就知道该看谁 */
+.lv-avatar.acting {
+  transform: scale(1.12);
+  box-shadow: 0 0 0 4px rgba(102, 126, 234, 0.25), 0 3px 10px rgba(0, 0, 0, 0.18);
+}
+
+.lv-avatar.offline {
+  opacity: 0.45;
+  filter: grayscale(1);
+}
+
+.lv-avatar-face {
+  line-height: 1;
+  user-select: none;
+}
+
+/* 剩余骰子角标：本需求要求「一眼看到每人还剩几颗」 */
+.lv-avatar-dice {
+  position: absolute;
+  right: -6px;
+  bottom: -5px;
+  min-width: 20px;
+  height: 18px;
+  padding: 0 4px;
+  border-radius: 9px;
+  background: #667eea;
+  color: #fff;
+  font-size: 11px;
+  font-weight: 600;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 1px;
+  border: 1.5px solid #fff;
+  line-height: 1;
+}
+
+.lv-avatar-dice i {
+  font-size: 9px;
+  font-style: normal;
+}
+
+/* 骰子用光的人，角标转灰，提示他这轮只能看着 */
+.lv-avatar-dice.zero {
+  background: #bdbdbd;
+}
+
+.lv-avatar-ai {
+  position: absolute;
+  left: -8px;
+  top: -6px;
+  background: #8e24aa;
+  color: #fff;
+  font-size: 9px;
+  font-weight: 600;
+  border-radius: 6px;
+  padding: 1px 4px;
+  border: 1.5px solid #fff;
+  line-height: 1.2;
+}
+
+.lv-avatar-splat {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 26px;
+  animation: lv-splat 0.6s ease-out;
+  pointer-events: none;
+}
+
+@keyframes lv-splat {
+  0% { transform: scale(0.2); opacity: 0; }
+  45% { transform: scale(1.25); opacity: 1; }
+  100% { transform: scale(1); opacity: 0; }
+}
+
+/* 番茄按钮：平时半透明，悬停/聚焦才完全显形，不喧宾夺主 */
+.lv-avatar-tomato {
+  position: absolute;
+  right: -9px;
+  top: -8px;
+  width: 22px;
+  height: 22px;
+  padding: 0;
+  border-radius: 50%;
+  border: 1.5px solid #fff;
+  background: #fff5f5;
+  font-size: 12px;
+  line-height: 1;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  opacity: 0.75;
+  transition: transform 0.15s ease, opacity 0.15s ease;
+}
+
+.lv-avatar-tomato:hover,
+.lv-avatar-tomato:focus-visible {
+  opacity: 1;
+  transform: scale(1.2) rotate(-12deg);
+}
+
+.lv-avatar-name {
+  font-size: 11px;
+  color: #555;
+  max-width: 62px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  text-align: center;
+}
+
+.lv-avatar-money {
+  font-size: 10px;
+  color: #2e7d32;
+  font-weight: 600;
+}
+
+/* 宽屏才把两侧栏固定到视口边缘，避免中等宽度下压住正文 */
+@media (min-width: 1100px) {
+  .lv-page {
+    padding-left: 92px;
+    padding-right: 92px;
+  }
+
+  .lv-rails {
+    display: block;
+  }
+
+  .lv-rail {
+    position: fixed;
+    top: 50%;
+    transform: translateY(-50%);
+    max-height: 86vh;
+    overflow-y: auto;
+    padding: 6px;
+  }
+
+  .lv-rail-left {
+    left: 10px;
+  }
+
+  .lv-rail-right {
+    right: 10px;
+  }
+}
+
+/* 窄屏：并成一条可横向滚动的头像带，左栏贴左、右栏贴右 */
+@media (max-width: 1099px) {
+  .lv-rail {
+    flex-direction: row;
+    align-items: flex-start;
+    overflow-x: auto;
+    padding: 2px;
+  }
+
+  .lv-rail-left {
+    justify-content: flex-start;
+  }
+
+  .lv-rail-right {
+    justify-content: flex-end;
+  }
+
+  .lv-avatar-slot {
+    flex: none;
+  }
+
+  .lv-avatar {
+    width: 40px;
+    height: 40px;
+    font-size: 16px;
+  }
+
+  .lv-avatar-tomato {
+    opacity: 0.9;
+  }
 }
 
 .lv-toast {
@@ -909,7 +1297,23 @@ export default {
 .lv-offline {
   font-size: 11px;
   color: #f44336;
+}
+
+/* 大厅玩家列表右侧的剩余骰子数 */
+.lv-dice-count {
   margin-left: auto;
+  font-size: 12px;
+  font-weight: 600;
+  color: #667eea;
+  background: #f0f0ff;
+  border-radius: 6px;
+  padding: 1px 8px;
+  flex: none;
+}
+
+.lv-dice-count.zero {
+  color: #999;
+  background: #f2f2f2;
 }
 
 .lv-hint {
@@ -1028,25 +1432,27 @@ export default {
 }
 
 .lv-casino-total {
-  font-size: 15px;
-  font-weight: 600;
-  color: #2e7d32;
-  margin: 6px 0 4px;
+  font-size: 11px;
+  font-weight: 500;
+  color: #8a9a8c;
+  margin: 5px 0 0;
 }
 
 .lv-notes {
   display: flex;
   flex-wrap: wrap;
   gap: 3px;
-  min-height: 18px;
+  min-height: 24px;
 }
 
 .lv-note {
-  font-size: 10px;
+  font-size: 14px;
+  font-weight: 700;
   background: #e8f5e9;
-  color: #2e7d32;
-  border-radius: 4px;
-  padding: 1px 4px;
+  color: #1b5e20;
+  border-radius: 5px;
+  padding: 2px 6px;
+  line-height: 1.3;
 }
 
 .lv-dice-area {
@@ -1157,6 +1563,20 @@ export default {
   text-align: right;
 }
 
+/* 结算名次里的剩余骰子，骰子用光时转灰 */
+.lv-standing-dice {
+  color: #667eea;
+  font-weight: 600;
+  width: 42px;
+  text-align: right;
+  flex: none;
+}
+
+.lv-standing-dice.zero {
+  color: #bbb;
+  font-weight: 400;
+}
+
 .lv-payout summary {
   cursor: pointer;
   font-size: 14px;
@@ -1251,6 +1671,13 @@ export default {
 .lv-legend-tag.ai {
   color: #8e24aa;
   border-color: #e0c2ec;
+}
+
+/* 名册里的剩余骰子，和头像角标用同一套视觉语言 */
+.lv-legend-dice {
+  font-size: 11px;
+  color: #667eea;
+  font-weight: 600;
 }
 
 .lv-dot.big {
@@ -1511,5 +1938,21 @@ export default {
   border-radius: 6px;
   padding: 5px 9px;
   margin-top: 6px;
+}
+</style>
+
+<!--
+  飞行中的番茄由 JS 动态创建并挂到 <body> 上，拿不到 scoped 的 data 属性，
+  所以这段样式必须是全局的（单独一个不带 scoped 的 style 块）。
+-->
+<style>
+.lv-tomato-fly {
+  position: fixed;
+  z-index: 1000;
+  font-size: 26px;
+  line-height: 1;
+  pointer-events: none;
+  will-change: transform, opacity;
+  user-select: none;
 }
 </style>
