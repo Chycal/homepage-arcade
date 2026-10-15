@@ -1109,7 +1109,9 @@ export default {
     transform: translateY(-50%);
     max-height: 86vh;
     overflow-y: auto;
-    padding: 6px;
+    /* 上下留够：🍅 按钮和 AI 角标都用负偏移挂在头像外沿，
+       而 overflow 一旦不是 visible 就会把超出部分裁掉/变成滚动区 */
+    padding: 12px 8px;
   }
 
   .lv-rail-left {
@@ -1127,7 +1129,8 @@ export default {
     flex-direction: row;
     align-items: flex-start;
     overflow-x: auto;
-    padding: 2px;
+    /* 同宽屏：留出负偏移的 🍅 按钮与 AI 角标，别被 overflow 裁掉 */
+    padding: 10px 8px 4px;
   }
 
   .lv-rail-left {
