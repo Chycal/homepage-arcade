@@ -134,18 +134,15 @@ public class UserService {
         // 验证密码
         if (!passwordEncoder.matches(password, user.getPassword())) {
             int newAttempts = user.getFailedAttempts() + 1;
-            LocalDateTime lockUntil = null;
-
-            if (newAttempts >= MAX_FAILED_ATTEMPTS) {
-                lockUntil = LocalDateTime.now().plusMinutes(LOCK_DURATION_MINUTES);
-            }
+            // 是否已到锁定阈值：决定要不要写锁定时间，也决定下面返回哪句提示
+            boolean locked = newAttempts >= MAX_FAILED_ATTEMPTS;
+            LocalDateTime lockUntil = locked ? LocalDateTime.now().plusMinutes(LOCK_DURATION_MINUTES) : null;
             userRepository.updateFailedAttempts(user.getId(), newAttempts, lockUntil);
 
-            if (newAttempts >= MAX_FAILED_ATTEMPTS) {
-                result.put("success", false);
+            result.put("success", false);
+            if (locked) {
                 result.put("message", "密码错误次数过多，账号已被临时锁定" + LOCK_DURATION_MINUTES + "分钟");
             } else {
-                result.put("success", false);
                 result.put("message", "用户名或密码错误（剩余尝试次数: " + (MAX_FAILED_ATTEMPTS - newAttempts) + "）");
             }
             return result;

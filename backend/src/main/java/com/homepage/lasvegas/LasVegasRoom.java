@@ -35,7 +35,13 @@ public class LasVegasRoom {
 
     private static final Logger log = LoggerFactory.getLogger(LasVegasRoom.class);
     private static final ObjectMapper MAPPER = new ObjectMapper();
-    private static final int CHAT_LIMIT = 30;
+    /**
+     * 聊天区最多保留的条数，超出后从头部（最旧的）丢弃。
+     *
+     * 与五子棋房间的 {@code GameRoom.MAX_COMMENTS} 是同一个概念，只是容量不同
+     * （那边 10 条，这边给到 30 条，因为对局更长、聊天更多）。
+     */
+    private static final int MAX_CHAT_MESSAGES = 30;
     private static final int MAX_MEMBERS = 5;
 
     /**
@@ -145,12 +151,23 @@ public class LasVegasRoom {
     /** 是否已有一个待执行的 AI 行动，避免重复排程导致连走两步 */
     private boolean aiTurnScheduled;
 
+    /**
+     * @param roomCode   房间标识，当前恒为 {@code "default"}（见 {@link LasVegasRoomRegistry}）
+     * @param repository 对局记录仓库，仅在整局结束时写入
+     * @param jwtUtil    用于校验 join 消息里的 token，从而认出登录用户
+     */
     public LasVegasRoom(String roomCode, LasVegasRepository repository, JwtUtil jwtUtil) {
         this.roomCode = roomCode;
         this.repository = repository;
         this.jwtUtil = jwtUtil;
     }
 
+    /**
+     * 房间标识。
+     *
+     * 目前没有调用方：房间号已经通过 {@code room_state} 的 {@code roomCode} 字段下发给前端。
+     * 保留它是为了 {@link LasVegasRoomRegistry} 之后做多房间路由时能从外部读回房间号。
+     */
     public String getRoomCode() {
         return roomCode;
     }
@@ -226,6 +243,8 @@ public class LasVegasRoom {
         }
     }
 
+    // ==================== 生命周期：连接 / 断线 / 回到大厅 ====================
+
     /** 清空对局，回到大厅；同时移除已掉线的成员 */
     private void resetToLobby() {
         resetToLobby(true);
@@ -247,6 +266,8 @@ public class LasVegasRoom {
         members.entrySet().removeIf(e -> !e.getValue().connected || (e.getValue().ai && !keepAi));
         renumberAi();
     }
+
+    // ==================== 消息入口 ====================
 
     public void handleMessage(WebSocketSession session, String payload) {
         Map<String, Object> message;
@@ -300,6 +321,8 @@ public class LasVegasRoom {
                     sendError(session, "未知消息类型: " + type);
             }
         } catch (IllegalArgumentException | IllegalStateException e) {
+            // 这两种异常都是本类主动抛的，message 写的就是给玩家看的文案（如「请先加入房间」），
+            // 直接透出去。下面的兜底分支则相反：未预期异常一律用固定文案，不泄露内部细节。
             sendError(session, e.getMessage());
         } catch (Exception e) {
             log.warn("[{}] 处理 {} 失败: {}", roomCode, type, e.toString());
@@ -310,6 +333,8 @@ public class LasVegasRoom {
     // ------------------------------------------------------------------
     // 消息处理
     // ------------------------------------------------------------------
+
+    // ==================== 入座 / 离开 / 观战 ====================
 
     private void onJoin(WebSocketSession session, Map<String, Object> message) {
         String token = str(message.get("token"));
@@ -470,6 +495,8 @@ public class LasVegasRoom {
         return members.size() % COLORS.length;
     }
 
+    // ==================== 开局 / 掷骰 / 选点数 / 再来一局 ====================
+
     private void onStart(WebSocketSession session) {
         synchronized (this) {
             String key = sessionToKey.get(session.getId());
@@ -567,6 +594,8 @@ public class LasVegasRoom {
      * 可选 {@code style}: solid / bold / wild，缺省 solid。
      * 仅在未开局时可用；AI 与真人一样占一个座位，同样受 5 人上限约束。
      */
+    // ==================== AI 对手：增删 / 自动托管 ====================
+
     private void onAddAi(WebSocketSession session, Map<String, Object> message) {
         synchronized (this) {
             String key = sessionToKey.get(session.getId());
@@ -760,6 +789,8 @@ public class LasVegasRoom {
         }
     }
 
+    // ==================== 聊天 / 扔番茄 ====================
+
     private void onChat(WebSocketSession session, Map<String, Object> message) {
         synchronized (this) {
             String key = sessionToKey.get(session.getId());
@@ -790,7 +821,7 @@ public class LasVegasRoom {
             }
             entry.put("text", text);
             chat.addLast(entry);
-            while (chat.size() > CHAT_LIMIT) {
+            while (chat.size() > MAX_CHAT_MESSAGES) {
                 chat.removeFirst();
             }
             broadcastState();
@@ -877,6 +908,8 @@ public class LasVegasRoom {
     }
 
     /** 校验：对局中、已加入、轮到自己、且已投骰（choose 另行校验） */
+    // ==================== 权限与身份 ====================
+
     private String requirePlayingTurn(WebSocketSession session) {
         if (roomPhase != RoomPhase.PLAYING || game == null) {
             sendError(session, "对局尚未开始");
@@ -911,6 +944,8 @@ public class LasVegasRoom {
     // ------------------------------------------------------------------
     // 战绩落库
     // ------------------------------------------------------------------
+
+    // ==================== 战绩落库 ====================
 
     private void persistResult() {
         if (game == null || savedMatchId != null) {
@@ -960,6 +995,8 @@ public class LasVegasRoom {
      * 会定期遍历它们的地方。状态广播和瞬时事件（番茄）必须用同一套「谁还在线」
      * 的判断，所以抽出来共用，避免两处各写一遍后慢慢走样。
      */
+    // ==================== 广播与状态序列化 ====================
+
     private List<WebSocketSession> reachableSessions() {
         List<WebSocketSession> sessions = new ArrayList<>();
         for (Member member : members.values()) {
@@ -1072,6 +1109,8 @@ public class LasVegasRoom {
     }
 
     /** 可选电脑性格（名称 + 中文标签），供前端下拉框使用 */
+    // ==================== 状态片段构造 ====================
+
     private List<Map<String, Object>> aiStyleOptions() {
         List<Map<String, Object>> list = new ArrayList<>();
         for (LasVegasAi.Style style : LasVegasAi.Style.values()) {
@@ -1176,6 +1215,8 @@ public class LasVegasRoom {
         }
         return list;
     }
+
+    // ==================== 工具方法 ====================
 
     private String usernameOf(String key) {
         Member member = members.get(key);

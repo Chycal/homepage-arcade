@@ -23,6 +23,12 @@ import java.util.Map;
 @RequestMapping("/api/lasvegas")
 public class LasVegasController {
 
+    /**
+     * 单次查询对局记录的上限，防止一次把整张表拉出来。
+     *
+     * 既用于 {@code /matches} 的 limit 夹取，也是 {@code /stats} 的统计样本上限——
+     * 也就是说 /stats 只统计最近 100 局，不是全量历史。
+     */
     private static final int MAX_LIMIT = 100;
 
     private final LasVegasRepository repository;

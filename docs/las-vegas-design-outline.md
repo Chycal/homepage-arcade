@@ -528,8 +528,10 @@ for each casino:
 ### 15.1 新增文件
 
 ```
-frontend/src/views/LasVegas.vue     ← 主视图
-frontend/src/utils/lasvegas.js      ← 可选：状态/颜色/格式化辅助
+frontend/src/views/LasVegas.vue          ← 主视图
+frontend/src/views/LasVegasRulesPage.vue ← 独立规则页（路由 /las-vegas/rules）
+frontend/src/components/LasVegasRules.vue← 规则内容，被上两者复用
+frontend/src/utils/lasvegas.js           ← 赌场名、骰子颜色、金额格式化（主视图与规则页共用）
 ```
 
 ### 15.2 路由注册

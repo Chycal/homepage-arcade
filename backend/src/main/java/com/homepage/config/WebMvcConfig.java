@@ -11,15 +11,30 @@ import org.springframework.web.servlet.resource.PathResourceResolver;
 import java.io.IOException;
 
 /**
- * Web MVC 配置
- * 配置 SPA 路由：所有非 /api/** 的请求都转发到 index.html
+ * Web MVC 配置：SPA 路由的前端路由 fallback。
+ *
+ * 前端路由分两条路兜底，缺一不可：
+ * <ul>
+ *   <li>根路径 {@code /} 由 {@link #addViewControllers} 显式转发到 index.html；</li>
+ *   <li>其余前端路由（{@code /las-vegas}、{@code /gomoku} 等）由
+ *       {@link #addResourceHandlers} 里的 {@link PathResourceResolver} 兜底：
+ *       静态资源不存在时返回 index.html。</li>
+ * </ul>
+ *
+ * 注意：{@code /api/**} 由 Controller 处理，Controller 映射优先于资源处理器，
+ * 所以正常接口不会走到 fallback。真正拦截未知 {@code /api} 路径的是
+ * {@link SecurityConfig} 里的 {@code .antMatchers("/api/**").authenticated()}：
+ * 未带合法 JWT 时直接 403，不会返回 index.html。前端不要把「200 + HTML」
+ * 当成接口响应，也不要用 404 判断接口是否存在（拿到的会是 403）。
  */
 @Configuration
 public class WebMvcConfig implements WebMvcConfigurer {
 
     /**
-     * 将 Vue Router 的所有路径转发到 index.html（SPA 模式）
-     * /api/** 的请求不受影响，由 Controller 处理
+     * 根路径转发到 index.html。
+     *
+     * 这里只注册了 {@code /} 一条；其余前端路由见 {@link #addResourceHandlers}
+     * 的 PathResourceResolver fallback，别以为加一条前端路由需要动这个类。
      */
     @Override
     public void addViewControllers(ViewControllerRegistry registry) {
@@ -28,7 +43,7 @@ public class WebMvcConfig implements WebMvcConfigurer {
     }
 
     /**
-     * 配置静态资源路径
+     * 配置静态资源路径，并让缺失的资源回退到 index.html（SPA 前端路由 fallback）。
      */
     @Override
     public void addResourceHandlers(ResourceHandlerRegistry registry) {

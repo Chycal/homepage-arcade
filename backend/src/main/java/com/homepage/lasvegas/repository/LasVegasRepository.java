@@ -133,7 +133,16 @@ public class LasVegasRepository {
         return count != null ? count : 0;
     }
 
-    /** 计算并填充「我」在这局的名次与成绩 */
+    /**
+     * 计算并填充「我」在这局的名次与成绩。
+     *
+     * 名次 = 在 standings 中的位置（从 1 开始）。standings 的顺序由
+     * {@link #findPlayersByMatch} 的 SQL 决定：{@code ORDER BY money DESC, banknotes DESC, seat ASC}。
+     * 这条 tie-break 链就是业务规则（先比钱、再比钞票张数、最后按座位），
+     * 与 {@link com.homepage.lasvegas.LasVegasScoring} 的判定口径必须一致，改一处要同步另一处。
+     *
+     * 注意 {@code rank}（名次）与 {@code LasVegasPlayerResult.seat}（座位号）是两个概念，别混用。
+     */
     private void fillMyResult(LasVegasMatchSummary match, long userId) {
         int rank = 1;
         for (LasVegasPlayerResult standing : match.getStandings()) {

@@ -130,6 +130,8 @@ export default {
       ws: null,
       userId: '',
       connected: false,
+      // 断线重连的定时器句柄：必须存下来，否则离开页面后仍会触发重连
+      reconnectTimer: null,
 
       state: {
         black: null,
@@ -221,7 +223,8 @@ export default {
     },
 
     connect() {
-      this.userId = this.getUserId()
+      // userId 在 mounted 里已经定好（匿名 id 存在 sessionStorage，重连时不变），
+      // 这里不再重复取，避免读者以为重连会换身份
       const proto = location.protocol === 'https:' ? 'wss:' : 'ws:'
       const url = `${proto}//${location.host}/ws/game`
       this.ws = new WebSocket(url)
@@ -242,8 +245,9 @@ export default {
 
       this.ws.onclose = () => {
         this.connected = false
-        // 5秒后重连
-        setTimeout(() => {
+        // 5 秒后重连；先清掉上一次的定时器，避免短时间内反复断开时叠加多个重连
+        clearTimeout(this.reconnectTimer)
+        this.reconnectTimer = setTimeout(() => {
           if (!this.connected) this.connect()
         }, 5000)
       }
@@ -272,6 +276,9 @@ export default {
           this.resultWinner = msg.winner === 1 ? 'black' : msg.winner === 2 ? 'white' : 'draw'
           break
         case 'error':
+          // 这里用原生 alert 而不是页面内 toast：五子棋房间是对局中的强打断提示
+          // （座位被占、不是你的回合等），必须让用户立刻看到。
+          // 拉斯维加斯页用的是非阻塞 toast，因为那边番茄/聊天这类轻交互多。
           alert(msg.message)
           break
       }
@@ -330,6 +337,7 @@ export default {
       this.send({ type: 'leave' })
     },
 
+    /** 认输是不可逆操作，先弹原生 confirm 让用户确认一次 */
     confirmResign() {
       if (confirm('确定要认输吗？')) {
         this.send({ type: 'resign' })
@@ -468,7 +476,9 @@ export default {
           if (lm && lm.row === r && lm.col === c) {
             ctx.beginPath()
             ctx.arc(cx, cy, 3, 0, Math.PI * 2)
-            ctx.fillStyle = val === 1 ? '#ff4444' : '#ff4444'
+            // 黑子（#111）和白子（#fff）上都用这个红点，两边都够醒目，
+            // 所以不需要按 val 区分颜色
+            ctx.fillStyle = '#ff4444'
             ctx.fill()
           }
         }
@@ -476,7 +486,11 @@ export default {
     },
 
     cleanup() {
+      // 主动离开：先清重连定时器，再摘掉 onclose，否则 close() 会触发 onclose
+      // 又排一次重连，导致离开页面后还在后台连
+      clearTimeout(this.reconnectTimer)
       if (this.ws) {
+        this.ws.onclose = null
         this.send({ type: 'leave' })
         this.ws.close()
         this.ws = null

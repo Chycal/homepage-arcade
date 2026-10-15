@@ -53,7 +53,6 @@ class JwtUtilTest {
             String token = jwtUtil.generateAccessToken(42L, "alice", "ADMIN");
             assertThat(jwtUtil.getUserIdFromToken(token)).isEqualTo(42L);
             assertThat(jwtUtil.extractUsername(token)).isEqualTo("alice");
-            assertThat(jwtUtil.extractRole(token)).isEqualTo("ADMIN");
             assertThat(jwtUtil.getRoleFromToken(token)).isEqualTo("ADMIN");
         }
 

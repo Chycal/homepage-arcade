@@ -35,7 +35,7 @@
           </div>
         </div>
         <div class="skill-category" v-if="skills.frameworks">
-          <h3>框架 & 框架</h3>
+          <h3>框架 & 库</h3>
           <div class="skill-tags">
             <span v-for="item in skills.frameworks" :key="item" class="skill-tag">{{ item }}</span>
           </div>
@@ -126,6 +126,7 @@ export default {
 </script>
 
 <style scoped>
+/* ===== 顶部 Hero 区（头像 + 标题 + 简介 + 联系方式）===== */
 .hero {
   background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
   color: #fff;
@@ -204,6 +205,8 @@ export default {
   50% { box-shadow: 0 0 0 8px rgba(255,255,255,0); }
 }
 
+/* 桌面端（≥641px）把 Hero 放大一号；下面的 .section/.project-grid 也各有一段同类断点，
+   因为断点值相同但作用对象不同，故意分开写而不合并成一个 @media 块。 */
 @media (min-width: 641px) {
   .hero {
     padding: 80px 24px 60px;
@@ -231,6 +234,7 @@ export default {
   }
 }
 
+/* ===== 内容区通用外壳：技能 / 项目 / 状态三个区块共用 .section 和 .section-title ===== */
 .section {
   max-width: 900px;
   margin: 0 auto;
@@ -272,6 +276,7 @@ export default {
   border-bottom: 2px solid #667eea;
 }
 
+/* 技能标签：浅紫底 + 主色字，做成胶囊形 */
 .skill-tags {
   display: flex;
   flex-wrap: wrap;
@@ -288,6 +293,7 @@ export default {
   font-weight: 500;
 }
 
+/* 项目卡片：默认单列，≥641px 起自动铺成多列并加深悬浮阴影 */
 .project-grid {
   display: grid;
   grid-template-columns: 1fr;
@@ -339,6 +345,7 @@ export default {
   color: #888;
 }
 
+/* 状态卡：健康检查结果，ok 绿 / err 红，靠 .status-dot 的 currentColor 跟随文字色 */
 .status-section {
   padding-bottom: 60px;
 }

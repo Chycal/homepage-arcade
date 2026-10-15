@@ -1,6 +1,8 @@
 package com.homepage.config;
 
-import io.jsonwebtoken.*;
+import io.jsonwebtoken.Claims;
+import io.jsonwebtoken.Jwts;
+import io.jsonwebtoken.SignatureAlgorithm;
 import io.jsonwebtoken.security.Keys;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Component;
@@ -114,12 +116,5 @@ public class JwtUtil {
      */
     public String extractUsername(String token) {
         return validateAccessToken(token).get("username", String.class);
-    }
-
-    /**
-     * 从 Token 中提取角色（别名）
-     */
-    public String extractRole(String token) {
-        return validateAccessToken(token).get("role", String.class);
     }
 }

@@ -233,7 +233,13 @@ public class LasVegasGame {
         return standings;
     }
 
-    /** 结算后按钱多、钞票张数多排序的玩家列表 */
+    /**
+     * 结算后按「钱多 → 钞票张数多」排序的玩家列表。
+     *
+     * 与 {@link #getStandings()} 的区别：那个返回的是不含玩家对象的战绩快照，
+     * 这个返回的是排好序的 {@link Player} 本身。目前没有调用方——前端展示用的是
+     * {@code getStandings()} + 座位号，保留它是为了让引擎能直接给出排序后的玩家。
+     */
     public List<Player> getRanking() {
         List<Player> sorted = new ArrayList<>(players);
         List<LasVegasScoring.Standing> ordered = LasVegasScoring.ranking(getStandings());

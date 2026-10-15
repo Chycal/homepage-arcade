@@ -38,7 +38,7 @@
         </tbody>
       </table>
 
-      <h3>钞票（54 张）</h3>
+      <h3>钞票（{{ totalNotes }} 张）</h3>
       <table class="rl-table">
         <thead>
           <tr><th>面额</th><th>张数</th></tr>
@@ -50,7 +50,7 @@
           </tr>
           <tr class="rl-total">
             <td>合计</td>
-            <td>54 张 · ${{ money(2500000) }}</td>
+            <td>{{ totalNotes }} 张 · ${{ money(totalValue) }}</td>
           </tr>
         </tbody>
       </table>
@@ -299,14 +299,7 @@
 </template>
 
 <script>
-const CASINOS = [
-  { value: 1, name: 'Golden Nugget' },
-  { value: 2, name: "Caesar's Palace" },
-  { value: 3, name: 'The Mirage' },
-  { value: 4, name: 'Sahara' },
-  { value: 5, name: 'Luxor' },
-  { value: 6, name: 'Circus Circus' }
-]
+import { CASINOS, formatMoney } from '@/utils/lasvegas'
 
 const BANKNOTES = [
   { value: 90000, count: 5 },
@@ -320,11 +313,17 @@ const BANKNOTES = [
   { value: 10000, count: 6 }
 ]
 
+// 张数与总额都从 BANKNOTES 推出来，不在文案里再手写一遍数字：
+// 后端 LasVegasBanknotes 的 TOTAL_NOTES = 54、TOTAL_VALUE = 2_500_000
+// 就是这两个值的来源，改面额构成时这里会自动跟上，不会出现「表格和正文对不上」。
+const TOTAL_NOTES = BANKNOTES.reduce((sum, n) => sum + n.count, 0)
+const TOTAL_VALUE = BANKNOTES.reduce((sum, n) => sum + n.value * n.count, 0)
+
 const FACTS = [
   { k: '人数', v: '2–5 人' },
   { k: '骰子', v: '每人 8 颗（40 颗 = 8 颗 × 5 色）' },
   { k: '赌场', v: '6 个（点数 1–6）' },
-  { k: '钞票', v: '54 张，共 $2,500,000' },
+  { k: '钞票', v: `${TOTAL_NOTES} 张，共 $${TOTAL_VALUE.toLocaleString('en-US')}` },
   { k: '轮数', v: '4 轮' },
   { k: '胜负', v: '钱最多者胜 → 平手比钞票张数 → 再平手并列胜' }
 ]
@@ -336,6 +335,8 @@ export default {
       casinos: CASINOS,
       banknotes: BANKNOTES,
       facts: FACTS,
+      totalNotes: TOTAL_NOTES,
+      totalValue: TOTAL_VALUE,
       demoNames: ['Anna', 'Benno', 'Carla', 'Denny', 'Emma'],
       // 默认演示「2/2/1/1 全灭」这个反直觉情形
       demoDice: [2, 1, 2, 1, 0]
@@ -384,8 +385,9 @@ export default {
     }
   },
   methods: {
+    /** 千分位金额（不带 $ 前缀），模板里自己拼 "$" */
     money(value) {
-      return Number(value || 0).toLocaleString('en-US')
+      return formatMoney(value)
     },
     bump(seat, delta) {
       const next = this.demoDice[seat] + delta
@@ -438,9 +440,12 @@ export default {
   margin: 6px 0;
 }
 
-.rl-lead {
-  font-size: 15px !important;
-  color: #333 !important;
+/* 用 .rl-card p.rl-lead（0,2,1）而不是 .rl-lead（0,1,0）：
+   上面的 .rl-card p 是 0,1,1，权重更高会盖掉字号和颜色，
+   这里靠提高选择器权重解决，不用 !important。 */
+.rl-card p.rl-lead {
+  font-size: 15px;
+  color: #333;
   background: #f7f7fc;
   border-left: 3px solid #667eea;
   border-radius: 0 8px 8px 0;
@@ -536,9 +541,11 @@ export default {
   margin-bottom: 6px;
 }
 
-.rl-note {
-  font-size: 13px !important;
-  color: #8a6d3b !important;
+/* 同样用 .rl-card .rl-note（0,2,0）压过 .rl-card p（0,1,1），替代 !important。
+   这个类同时用在 <p> 和 <span> 上，用后代选择器两边都覆盖。 */
+.rl-card .rl-note {
+  font-size: 13px;
+  color: #8a6d3b;
   background: #fcf8e3;
   border-radius: 6px;
   padding: 7px 11px;
@@ -737,10 +744,11 @@ export default {
   color: #999;
 }
 
-.rl-demo-summary {
-  font-size: 13px !important;
-  color: #555 !important;
-  margin: 4px 0 0 !important;
+/* 同 .rl-card p.rl-lead：靠权重（0,2,1）压过 .rl-card p，不用 !important */
+.rl-card p.rl-demo-summary {
+  font-size: 13px;
+  color: #555;
+  margin: 4px 0 0;
 }
 
 .rl-muted {

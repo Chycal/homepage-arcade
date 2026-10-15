@@ -107,6 +107,7 @@ export default {
 </script>
 
 <style scoped>
+/* 整页居中容器：淡紫渐变底（33 = 20% 透明度），卡片垂直水平都居中 */
 .auth-wrapper {
   display: flex;
   justify-content: center;
@@ -132,6 +133,7 @@ export default {
   color: #333;
 }
 
+/* 表单：label + input 一组，聚焦时主色描边 + 外发光 */
 .form-group {
   margin-bottom: 20px;
 }
@@ -175,6 +177,7 @@ export default {
   margin-bottom: 16px;
 }
 
+/* 提交按钮：与首页 Hero 同一套主色渐变；禁用态降到 0.6 透明度 */
 .auth-btn {
   width: 100%;
   padding: 12px;

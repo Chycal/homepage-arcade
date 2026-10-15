@@ -1,21 +1,32 @@
 package com.homepage.game;
 
 /**
- * 五子棋 AI：基于局面评分的启发式搜索
+ * 五子棋 AI：基于局面评分的启发式搜索。
+ *
+ * 策略是「单层贪心」：对每个空点分别按自己的进攻价值和对手的进攻价值打分，
+ * 取分数最高的点落子，不做多层搜索（五子棋分支太多，单层已经够用且响应快）。
  */
 public class GomokuAI {
 
-    // 评分权重
-    private static final int FIVE    = 1_000_000;
-    private static final int LIVE4   = 100_000;
-    private static final int RUSH4   = 10_000;
-    private static final int LIVE3   = 5_000;
-    private static final int SLEEP3  = 500;
-    private static final int LIVE2   = 200;
-    private static final int SLEEP2  = 50;
-    private static final int LIVE1   = 10;
+    // 评分权重：按棋型强度递减。名称沿用五子棋行话，
+    // 「活」= 两头都开口，「冲/眠」= 一头被堵，所以同长度的活棋远强于被堵的棋。
+    private static final int FIVE    = 1_000_000;  // 五连：已经赢了
+    private static final int LIVE4   = 100_000;    // 活四：两头开口，下一手必成五
+    private static final int RUSH4   = 10_000;     // 冲四：一头被堵，对手必须应
+    private static final int LIVE3   = 5_000;      // 活三：两头开口，威胁成四
+    private static final int SLEEP3  = 500;        // 眠三：一头被堵的三连
+    private static final int LIVE2   = 200;        // 活二
+    private static final int SLEEP2  = 50;         // 眠二
+    private static final int LIVE1   = 10;         // 活一：几乎没有价值，只为给空点一个基础分
 
-    // 方向向量
+    /**
+     * 防守权重：略低于进攻（0.95），避免 AI 一味跟着对手堵棋而不主动进攻。
+     * 只有当堵的价值明显高于自己进攻时才会选择防守。
+     */
+    private static final double DEFENSE_WEIGHT = 0.95;
+
+    // 方向向量：只需要向右、向下、右下、右上四个方向，
+    // 因为「向左/向上」和它们查的是同一条线，重复查没有意义。
     private static final int[][] DIRS = {{1, 0}, {0, 1}, {1, 1}, {1, -1}};
 
     /**
@@ -44,7 +55,7 @@ public class GomokuAI {
 
                 int attack = evalPos(board, r, c, player);
                 int defense = evalPos(board, r, c, opponent);
-                int score = attack + (int) (defense * 0.95);
+                int score = attack + (int) (defense * DEFENSE_WEIGHT);
 
                 if (score > bestScore) {
                     bestScore = score;

@@ -34,14 +34,4 @@ public class LasVegasRoomRegistry {
         return rooms.computeIfAbsent(code,
                 c -> new LasVegasRoom(c, repository, jwtUtil));
     }
-
-    /** 默认房间 */
-    public LasVegasRoom defaultRoom() {
-        return room(DEFAULT_ROOM);
-    }
-
-    /** 当前已创建的房间数（便于观测） */
-    public int roomCount() {
-        return rooms.size();
-    }
 }

@@ -9,7 +9,11 @@ import org.springframework.web.socket.TextMessage;
 import org.springframework.web.socket.WebSocketSession;
 
 import java.io.IOException;
-import java.util.*;
+import java.util.ArrayList;
+import java.util.LinkedHashMap;
+import java.util.LinkedList;
+import java.util.List;
+import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
@@ -46,6 +50,12 @@ public class GameRoom {
     private volatile PendingRequest pendingReq;
 
     // === 评论区（最近 10 条）===
+    /**
+     * 聊天区最多保留的条数，超出后从头部丢弃。
+     *
+     * 与拉斯维加斯房间的 {@code LasVegasRoom.MAX_CHAT_MESSAGES} 是同一个概念
+     * （那边容量 30，因为一局更长、聊天更多），改这里时留意别把两边规则搞混。
+     */
     private static final int MAX_COMMENTS = 10;
     private final LinkedList<Map<String, Object>> comments = new LinkedList<>();
 
@@ -601,10 +611,19 @@ public class GameRoom {
         }
     }
 
+    /**
+     * 序列化状态对象。
+     *
+     * 失败时返回空对象 {@code "{}"} 兜底，而不是把异常抛出去：调用方处在广播循环里，
+     * 抛异常会连带中断对其他玩家的推送，一个坏对象不该让整屋子人掉线。
+     * 代价是客户端会收到一个空的 {@code {}}，表现为「界面没反应」，所以这里必须留日志，
+     * 否则线上完全无迹可查（与 LasVegasRoom.safeSend 的处理口径一致）。
+     */
     private String toJson(Object obj) {
         try {
             return mapper.writeValueAsString(obj);
         } catch (Exception e) {
+            log.warn("房间状态序列化失败，已回退为空对象: {}", e.toString());
             return "{}";
         }
     }

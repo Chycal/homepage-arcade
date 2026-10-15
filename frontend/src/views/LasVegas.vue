@@ -69,7 +69,7 @@
               >🍅</button>
             </div>
             <span class="lv-avatar-name">{{ p.username }}</span>
-            <span v-if="phase !== 'LOBBY'" class="lv-avatar-money">${{ shortMoney(p.money) }}</span>
+            <span v-if="phase !== 'LOBBY'" class="lv-avatar-money">{{ shortMoney(p.money) }}</span>
           </div>
         </div>
       </div>
@@ -417,16 +417,7 @@
 <script>
 import { isLoggedIn, getAccessToken, getUsername, authFetch } from '@/utils/auth'
 import LasVegasRules from '@/components/LasVegasRules.vue'
-
-const DICE_COLORS = ['#e53935', '#1e88e5', '#43a047', '#fb8c00', '#8e24aa']
-const CASINO_NAMES = {
-  1: 'Golden Nugget',
-  2: "Caesar's Palace",
-  3: 'The Mirage',
-  4: 'Sahara',
-  5: 'Luxor',
-  6: 'Circus Circus'
-}
+import { casinoName as lookupCasinoName, diceColor as lookupDiceColor, formatMoney } from '@/utils/lasvegas'
 
 export default {
   name: 'LasVegas',
@@ -526,10 +517,10 @@ export default {
   },
   methods: {
     casinoName(value) {
-      return CASINO_NAMES[value] || ''
+      return lookupCasinoName(value)
     },
     diceColor(seat) {
-      return DICE_COLORS[seat % DICE_COLORS.length]
+      return lookupDiceColor(seat)
     },
     // 优先用后端下发的颜色（加入时固定），没有时按座位兜底
     colorOfPlayer(p) {
@@ -539,10 +530,6 @@ export default {
     colorOfKey(key) {
       const p = this.players.find(x => x.key === key)
       return p ? this.colorOfPlayer(p) : '#999'
-    },
-    seatOf(key) {
-      const p = this.players.find(x => x.key === key)
-      return p ? p.seat : 0
     },
     /**
      * 头像里的那个字。
@@ -565,9 +552,16 @@ export default {
       if (this.phase !== 'LOBBY') parts.push(`· $${this.money(player.money)}`)
       return parts.join(' ')
     },
+    /** 千分位金额（不带 $ 前缀），模板里自己拼 "$" */
     money(value) {
-      return Number(value || 0).toLocaleString('en-US')
+      return formatMoney(value)
     },
+    /**
+     * 金额缩写，用于空间紧张的地方（头像下方、赌场钞票面额）。
+     *
+     * 返回值**自带 `$` 前缀**，模板里不要再加 `$`。
+     * 钞票最小面额是 10000，所以所有金额都是 10000 的整数倍，不会出现小数。
+     */
     shortMoney(value) {
       return '$' + (value / 10000) + '万'
     },

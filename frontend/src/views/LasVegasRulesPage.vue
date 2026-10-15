@@ -15,6 +15,13 @@
 <script>
 import LasVegasRules from '@/components/LasVegasRules.vue'
 
+/**
+ * 独立的规则页，路由 /las-vegas/rules。
+ *
+ * 与对局页里的「规则」Tab 复用同一个 LasVegasRules 组件，本页只负责套一层
+ * 带标题和「去对局」按钮的外壳。保留独立路由是为了能直接把规则链接分享给别人
+ * （不用先进房间），所以这里不是重复实现，不要删掉其中一个。
+ */
 export default {
   name: 'LasVegasRulesPage',
   components: { LasVegasRules }
