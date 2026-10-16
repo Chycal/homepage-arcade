@@ -240,11 +240,12 @@ scheduleAiTurn()
   ├─ 当前玩家必须是「自动座位」（isAutomated：AI 或托管者）
   └─ 延迟 aiStepDelayMs 后执行 runAiTurn()
         ├─ 还没掷骰 → game.roll()
-        └─ 已掷骰   → game.choose(LasVegasAi.chooseValue(...))
+        ├─ 已掷骰且该跳过 → game.skip()          ← 房规，见 §6.9
+        └─ 否则      → game.choose(LasVegasAi.chooseValue(...))
         └─ 结束后 persistResult() + broadcastState() + scheduleAiTurn()
 ```
 
-调用点：`onStart`（开局后）、`onChoose`（每次有人选完点数后），
+调用点：`onStart`（开局后）、`onChoose` / `onSkip`（每次有人行动后），
 以及 `onLeave` / `handleDisconnect`（退出者可能正好是当前玩家，托管要立刻接手）。
 AI 走完后会再次 `scheduleAiTurn()`，形成链式驱动——
 如果下一个还是 AI（或托管座位），它会继续走，直到轮到真人为止。
@@ -303,6 +304,32 @@ AI 会写 `lasvegas_player` 行，但 `user_id = NULL`。
 `NULL` 永远不匹配，所以 AI 的成绩不会出现在任何人的战绩表里。
 测试 `aiResultsArePersisted` 明确断言「真人 `user_id = 42`，AI `user_id = null`」。
 
+### 6.9 房规：AI 也会跳过（`shouldSkip`）
+
+房规允许玩家花钱跳过本回合（见 [design-outline §2.1](las-vegas-design-outline.md)）。
+AI 同样参与，但它**不走蒙特卡洛**——跳过判定每个回合最多触发两次，
+不值得为它付 100 次推演的代价。取而代之的是两个便宜的一手评估：
+
+```
+bestNow = max over 当前投骰可选的每个点数 → onePlyScore(...)
+fresh   = max over 1..6，按「每点数平均分到 diceLeft/6 颗」估算的 onePlyScore(...)
+net     = fresh − bestNow − SKIP_COST
+跳过    ⟺ net > 门槛(风格)
+```
+
+| Style | 门槛 | 含义 |
+|---|---|---|
+| 稳健 | 15000 | 要明显划算才掏钱 |
+| 激进 | 5000 | 小赚也愿意赌 |
+| 赌徒 | 0 | 估算是正收益就赌 |
+
+`shouldSkip` 是**确定性**的（不掷随机数），所以同一局面永远得到同一答案，
+测试可以直接断言布尔值而不必固定种子。
+
+刻意**没有**改动 `decide` / `Decision`：`LasVegasAiTest.Choosing` 里的断言
+依赖 `Decision.getExpectedGains()` 的精确数值和「单候选短路返回全 0」的行为，
+把跳过塞进去会破坏这批测试。两条路径互不干扰。
+
 ---
 
 ## 7. 前端
@@ -326,17 +353,21 @@ AI 会写 `lasvegas_player` 行，但 `user_id = NULL`。
 cd backend && mvn -o test
 ```
 
-全量 **123 个测试**，其中 AI / 房间相关 45 个：
+全量 **151 个测试**，其中 AI / 房间相关 57 个：
 
-- `LasVegasAiTest`（19 个）
+- `LasVegasAiTest`（27 个）
   - `Basics`（5）：候选去重、View 快照、非法入参
   - `Choosing`（7）：偏好高价值赌场、不送人头、平手加注、避开必被作废的点
+  - `Skipping`（8）：无次数不跳、空投骰不跳、好牌不跳、烂牌且赌场肥就跳、
+    门槛有序（稳健不跳 / 激进和赌徒跳）、决策可复现、非法入参、未投骰时不建议
   - `Aggression`（3）：落后时 aggression 上升、性格基线、范围钳制
   - `Gameplay`（2）：随机对局不崩、结算守恒
   - `Strength`（2）：对「骰子最多」和「随机乱放」基线各 40 局，AI 必须赢
-- `LasVegasRoomAiTest`（26 个）
+- `LasVegasRoomAiTest`（30 个）
   - `Lobby`（8）：添加、选性格、仅房主、满员拒绝、移除后重编号、拒绝移除真人、AI 不当房主、无真人时清理
-  - `Playing`（4）：AI 自己走完、对局中禁止增删、AI 不阻塞真人、废弃对局不卡死房间
+  - `Playing`（8）：AI 自己走完、对局中禁止增删、AI 不阻塞真人、
+    **4 个房规用例**（真人可跳过且保留骰子、观战者不能跳过、未投骰跳过被拒、每跳一次消耗一次机会）、
+    废弃对局不卡死房间
   - `Restart`（2）：重开保留 AI、AI 战绩以 `user_id = NULL` 落库
   - `Spectating`（12）：所有人可观战、观战者不能操作、观战者不能开局、迟到者自动转观战、
     满员回落观战、观战者可在大厅入座、当前点数公开、离开立即刷新自己的视图、观战者可聊天、
@@ -354,6 +385,9 @@ cd backend && mvn -o test
 |---|---|---|---|
 | `DEFAULT_ROLLOUTS` | `LasVegasAi` | 100 | 每个候选的推演次数；越大越准越慢 |
 | `HIGH_QUANTILE` | `LasVegasAi` | 0.90 | 「高上限」的分位；越小越保守 |
+| `SKIP_REQUIRED_SOLID` | `LasVegasAi` | 15000 | 稳健型愿意跳过所需的净收益门槛 |
+| `SKIP_REQUIRED_BOLD` | `LasVegasAi` | 5000 | 激进型门槛（赌徒为 0） |
+| `ROUND_SUBSIDY` / `SKIP_COST` / `SKIPS_PER_ROUND` | `LasVegasGame` | 20000 / 10000 / 2 | 房规参数（见 design-outline §2.1） |
 | `styleBase` | `Style` | 0.05 / 0.30 / 0.55 | 性格的冒险基线 |
 | `0.65` | `aggressionOf` | 0.65 | 落后程度的放大系数 |
 | `aiStepDelayMs` | `LasVegasRoom` | 700 | AI 行动间隔（ms） |

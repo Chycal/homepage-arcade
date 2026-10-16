@@ -312,6 +312,89 @@ public final class LasVegasAi {
         return decide(viewOf(game), game.getCurrentPlayerIndex(), roll, style, random).getValue();
     }
 
+    // ------------------------------------------------------------------
+    // 房规：跳过（过牌）决策
+    // ------------------------------------------------------------------
+
+    /** 稳健型要求的净收益门槛 */
+    private static final double SKIP_REQUIRED_SOLID = 15_000;
+    /** 激进型要求的净收益门槛 */
+    private static final double SKIP_REQUIRED_BOLD = 5_000;
+
+    /**
+     * 房规：判断 AI 掷完骰子后该不该「跳过」本回合。
+     *
+     * 跳过 = 不放骰子、骰子全部保留、扣 {@link LasVegasGame#SKIP_COST}，下轮可以重掷全部骰子。
+     * 所以这本质上是一个「花 1 万买一次重掷」的买卖：只有当这次投骰确实很差、
+     * 而重掷的期望明显更高时才划算。
+     *
+     * 决策本身是确定性的（不掷随机数），保证同一局面永远得到同一答案。
+     *
+     * @return true 表示建议跳过
+     */
+    public static boolean shouldSkip(LasVegasGame game, Style style) {
+        if (game == null || !game.canSkip()) {
+            return false;
+        }
+        int me = game.getCurrentPlayerIndex();
+        return shouldSkip(viewOf(game), me, game.getLastRoll(),
+                game.getPlayer(me).getSkipsLeft(), style);
+    }
+
+    /**
+     * 跳过判定的可测试入口：用两个便宜的一手评估做比较，不跑蒙特卡洛
+     * （跳过判定每回合最多触发两次，没必要为它付出 100 次推演的代价）。
+     *
+     *  - {@code bestNow}：按当前投骰结果能拿到的最好收益。
+     *  - {@code fresh}：假设重掷，按「每个点数平均分到 diceLeft/6 颗」估算的最好收益。
+     * 两者之差再减去跳过成本就是这次跳过的净收益；性格越激进越容易掏钱赌。
+     *
+     * @param skipsLeft 当前玩家本轮还剩的跳过次数，已用光则直接返回 false
+     */
+    public static boolean shouldSkip(View view, int me, List<Integer> roll, int skipsLeft,
+                                     Style style) {
+        if (view == null) {
+            throw new IllegalArgumentException("view 不能为空");
+        }
+        if (me < 0 || me >= view.getPlayerCount()) {
+            throw new IllegalArgumentException("座位号越界: " + me);
+        }
+        if (skipsLeft <= 0) {
+            return false;
+        }
+        Map<Integer, Integer> options = optionsOf(roll);
+        if (options.isEmpty()) {
+            return false;
+        }
+
+        double bestNow = 0;
+        for (Map.Entry<Integer, Integer> option : options.entrySet()) {
+            bestNow = Math.max(bestNow, onePlyScore(view.dice, view.diceLeft, view, me,
+                    option.getKey(), option.getValue(), false));
+        }
+        double net = bestFreshRollEstimate(view, me) - bestNow - LasVegasGame.SKIP_COST;
+
+        // 赌徒型不设门槛：只要估算下来是正收益就赌
+        double required = style == Style.WILD ? 0
+                : style == Style.BOLD ? SKIP_REQUIRED_BOLD : SKIP_REQUIRED_SOLID;
+        return net > required;
+    }
+
+    /**
+     * 估算「重掷一次」能拿到的最好收益：按每个点数平均分到 {@code diceLeft / 6} 颗来算。
+     *
+     * 这是一个刻意简化的估计，只用来和当前这一手做相对比较，不追求绝对准确。
+     */
+    private static double bestFreshRollEstimate(View view, int me) {
+        int typical = Math.max(1, view.diceLeftOf(me) / LasVegasGame.CASINO_COUNT);
+        double best = 0;
+        for (int value = 1; value <= LasVegasGame.CASINO_COUNT; value++) {
+            best = Math.max(best, onePlyScore(view.dice, view.diceLeft, view, me,
+                    value, typical, false));
+        }
+        return best;
+    }
+
     /** 完整决策过程 */
     public static Decision decide(View view, int me, List<Integer> roll, Style style,
                                   Random random) {

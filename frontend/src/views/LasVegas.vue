@@ -167,6 +167,9 @@
       <template v-else>
         <div class="lv-round">
           <span class="lv-round-num">第 {{ state.round }} / {{ state.totalRounds }} 轮</span>
+          <span v-if="phase === 'PLAYING'" class="lv-subsidy">
+            本轮开局每人 +${{ money(state.roundSubsidy || 0) }}
+          </span>
           <span class="lv-turn" v-if="phase === 'PLAYING'">
             当前：<b :style="{ color: state.currentPlayerColor || '#333' }">
               {{ state.currentPlayerName }}</b>
@@ -225,6 +228,9 @@
             </span>
             <span>我的骰子：<b>{{ me ? me.diceLeft : 0 }}</b> 颗</span>
             <span>我的资金：<b>${{ money(me ? me.money : 0) }}</b>（{{ me ? me.banknotes : 0 }} 张）</span>
+            <span v-if="me" class="lv-me-skips">
+              跳过机会：<b>{{ me.skipsLeft }}</b> / {{ state.maxSkipsPerRound || 2 }}
+            </span>
           </div>
 
           <div v-if="isMyTurn" class="lv-me-body">
@@ -243,6 +249,19 @@
                   <span class="lv-option-count">{{ o.count }} 颗</span>
                 </button>
               </div>
+              <!-- 房规：跳过本回合（过牌），骰子保留，下次轮到自己时再掷 -->
+              <div v-if="state.canSkip" class="lv-skip-row">
+                <button class="lv-btn ghost lv-skip-btn" @click="skip">
+                  ⏭ 跳过本回合（扣 ${{ money(state.skipCost || 0) }}）
+                </button>
+                <span class="lv-skip-hint">
+                  骰子全部保留，下次轮到自己时再掷；本轮还剩
+                  <b>{{ state.skipsLeft }}</b> / {{ state.maxSkipsPerRound || 2 }} 次
+                </span>
+              </div>
+              <p v-else-if="state.skipsLeft === 0" class="lv-hint lv-skip-hint">
+                本轮跳过次数已用完（每轮最多 {{ state.maxSkipsPerRound || 2 }} 次）。
+              </p>
             </template>
           </div>
           <p v-else class="lv-hint">等待 {{ state.currentPlayerName }} 行动…</p>
@@ -473,7 +492,7 @@ export default {
       return this.me ? this.me.seat : -1
     },
     isMyTurn() {
-      return !!(this.state.canRoll || this.state.canChoose)
+      return !!(this.state.canRoll || this.state.canChoose || this.state.canSkip)
     },
     // 当前投骰玩家投出的点数，所有人（含观战者）都能看到
     currentRoll() {
@@ -549,7 +568,12 @@ export default {
       else if (player.autopilot) parts.push('· 托管中')
       if (!player.connected && !player.ai) parts.push('· 掉线')
       parts.push(`· 剩余骰子 ${player.diceLeft} 颗`)
-      if (this.phase !== 'LOBBY') parts.push(`· $${this.money(player.money)}`)
+      if (this.phase !== 'LOBBY') {
+        parts.push(`· $${this.money(player.money)}`)
+        if (typeof player.skipsLeft === 'number') {
+          parts.push(`· 跳过机会 ${player.skipsLeft} 次`)
+        }
+      }
       return parts.join(' ')
     },
     /** 千分位金额（不带 $ 前缀），模板里自己拼 "$" */
@@ -731,6 +755,11 @@ export default {
     },
     choose(value) {
       this.send({ type: 'choose', value })
+    },
+
+    /** 房规：跳过本回合（过牌），骰子保留，绕一圈后下次轮到自己时再掷 */
+    skip() {
+      this.send({ type: 'skip' })
     },
     start() {
       this.send({ type: 'start' })
@@ -1401,6 +1430,15 @@ export default {
   color: #667eea;
 }
 
+/* 房规提示：本轮开局人人有份的补贴 */
+.lv-subsidy {
+  color: #2e7d32;
+  background: #e8f5e9;
+  border-radius: 6px;
+  padding: 1px 8px;
+  font-size: 12px;
+}
+
 .lv-your-turn {
   color: #e65100;
   background: #fff3e0;
@@ -1543,6 +1581,32 @@ export default {
 .lv-option-count {
   font-size: 11px;
   color: #888;
+}
+
+/* 房规：跳过本回合的按钮与说明 */
+.lv-skip-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px;
+  margin-top: 12px;
+  padding-top: 12px;
+  border-top: 1px dashed #e0e0e0;
+}
+
+.lv-skip-btn {
+  border-color: #ffb74d;
+  color: #e65100;
+  background: #fff8e1;
+}
+
+.lv-skip-hint {
+  font-size: 12px;
+  color: #888;
+}
+
+.lv-me-skips {
+  color: #e65100;
 }
 
 .lv-winners {

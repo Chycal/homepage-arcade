@@ -299,6 +299,9 @@ public class LasVegasRoom {
                 case "choose":
                     onChoose(session, message);
                     break;
+                case "skip":
+                    onSkip(session);
+                    break;
                 case "restart":
                     onRestart(session);
                     break;
@@ -567,6 +570,25 @@ public class LasVegasRoom {
         }
     }
 
+    /**
+     * 房规：跳过本回合（过牌）。
+     *
+     * 与 {@link #onChoose} 的区别是这里不放骰子、只扣钱并把行动权交给下家，
+     * 所以不可能结束游戏，无需处理 FINISHED / persistResult。
+     */
+    private void onSkip(WebSocketSession session) {
+        synchronized (this) {
+            String key = requirePlayingTurn(session);
+            if (key == null) {
+                return;
+            }
+            game.skip();
+            broadcastState();
+            // 跳过之后轮到下家，可能正好是 AI
+            scheduleAiTurn();
+        }
+    }
+
     private void onRestart(WebSocketSession session) {
         synchronized (this) {
             if (roomPhase != RoomPhase.FINISHED) {
@@ -749,6 +771,9 @@ public class LasVegasRoom {
             try {
                 if (!game.hasRolled()) {
                     game.roll();
+                } else if (LasVegasAi.shouldSkip(game, current.aiStyle)) {
+                    // 房规：这次投骰太差，AI 花钱换一次重掷
+                    game.skip();
                 } else {
                     int value = LasVegasAi.chooseValue(game, game.getLastRoll(),
                             current.aiStyle, aiRandom);
@@ -1067,6 +1092,12 @@ public class LasVegasRoom {
             payload.put("options", Collections.emptyMap());
             payload.put("canRoll", false);
             payload.put("canChoose", false);
+            // 房规字段在大厅也要下发，前端才能用同一段模板显示规则说明
+            payload.put("canSkip", false);
+            payload.put("skipsLeft", LasVegasGame.SKIPS_PER_ROUND);
+            payload.put("skipCost", LasVegasGame.SKIP_COST);
+            payload.put("roundSubsidy", LasVegasGame.ROUND_SUBSIDY);
+            payload.put("maxSkipsPerRound", LasVegasGame.SKIPS_PER_ROUND);
             safeSend(session, payload);
             return;
         }
@@ -1090,6 +1121,13 @@ public class LasVegasRoom {
         payload.put("options", myTurn ? game.getOptions() : Collections.emptyMap());
         payload.put("canRoll", myTurn && !game.hasRolled());
         payload.put("canChoose", myTurn && game.hasRolled());
+        // 房规：跳过（过牌）——只有本人、已投骰、且本轮次数没用完时才可点
+        payload.put("canSkip", myTurn && game.canSkip());
+        payload.put("skipsLeft", myTurn ? game.getPlayer(game.getCurrentPlayerIndex())
+                .getSkipsLeft() : 0);
+        payload.put("skipCost", LasVegasGame.SKIP_COST);
+        payload.put("roundSubsidy", LasVegasGame.ROUND_SUBSIDY);
+        payload.put("maxSkipsPerRound", LasVegasGame.SKIPS_PER_ROUND);
 
         if (roomPhase == RoomPhase.FINISHED) {
             List<Map<String, Object>> winners = new ArrayList<>();
@@ -1166,6 +1204,8 @@ public class LasVegasRoom {
             entry.put("diceLeft", player.getDiceLeft());
             entry.put("money", player.getMoney());
             entry.put("banknotes", player.getBanknoteCount());
+            // 本轮剩余跳过次数，前端在头像/玩家行上直接展示
+            entry.put("skipsLeft", player.getSkipsLeft());
             list.add(entry);
         }
         return list;

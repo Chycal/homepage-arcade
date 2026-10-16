@@ -22,6 +22,15 @@ import java.util.concurrent.ThreadLocalRandom;
  *  - 结算：同一点数骰子数相同的玩家「全部作废」；其余按骰子数降序领面额从高到低的钞票。
  *  - 胜负：钱最多者胜；平手比钞票张数；再平手则并列胜利。
  *
+ * 房规（**非官方规则**，本站自行追加）：
+ *  - 每轮开始（含第 1 轮）每人直接获得 {@link #ROUND_SUBSIDY} 现金。
+ *  - 掷完骰子后可以选择「跳过」本回合：不放骰子、骰子全部保留，扣 {@link #SKIP_COST}，
+ *    行动权交给下家；下家走完再轮到自己时可以重新掷骰。
+ *  - 每人每轮最多跳过 {@link #SKIPS_PER_ROUND} 次。
+ *  这样不跳过的玩家能全额留下补贴，跳过的玩家则用钱换更多次掷骰机会。
+ *  注意：补贴由体系外注入，所以官方「$2,500,000 钞票守恒」在含房规后变为
+ *  {@code 玩家现金 + 赌场钞票 + 钞票堆 == TOTAL_VALUE + getInjectedMoney()}。
+ *
  * 未实现（按需求确认）：中立骰变体（2-4 人官方变体）。
  *
  * AI 对手由 {@link LasVegasAi} 提供决策逻辑，{@link LasVegasRoom} 负责驱动其自动行动。
@@ -35,6 +44,17 @@ public class LasVegasGame {
     public static final int MIN_CASINO_VALUE = 50_000;
     public static final int MIN_PLAYERS = 2;
     public static final int MAX_PLAYERS = 5;
+
+    /**
+     * 房规：每轮开始时每人直接到手的现金。
+     *
+     * 官方规则里没有这笔钱；它是本站为了让「跳过」有代价又有利可图而加的补贴。
+     */
+    public static final int ROUND_SUBSIDY = 20_000;
+    /** 房规：跳过本回合一次的代价 */
+    public static final int SKIP_COST = 10_000;
+    /** 房规：每人每轮最多能跳过几次 */
+    public static final int SKIPS_PER_ROUND = 2;
 
     public enum Phase {
         /** 放置骰子阶段 */
@@ -57,6 +77,8 @@ public class LasVegasGame {
         private int diceLeft;
         private int money;
         private int banknoteCount;
+        /** 本轮还剩几次「跳过」机会，每轮开始时重置为 {@link #SKIPS_PER_ROUND} */
+        private int skipsLeft;
 
         Player(String id, int seat) {
             this.id = id;
@@ -81,6 +103,11 @@ public class LasVegasGame {
 
         public int getBanknoteCount() {
             return banknoteCount;
+        }
+
+        /** 本轮还剩几次跳过机会 */
+        public int getSkipsLeft() {
+            return skipsLeft;
         }
     }
 
@@ -110,6 +137,10 @@ public class LasVegasGame {
     private Phase phase = Phase.PLACING;
     private List<Integer> lastRoll = null;
     private List<CasinoPayout> lastPayout = new ArrayList<>();
+    /** 累计发放的房规补贴 */
+    private int totalSubsidy = 0;
+    /** 累计扣除的跳过罚金 */
+    private int totalSkipCost = 0;
 
     public LasVegasGame(List<String> playerIds) {
         this(playerIds, () -> ThreadLocalRandom.current().nextInt(6) + 1, new Random());
@@ -178,6 +209,12 @@ public class LasVegasGame {
         return lastRoll != null;
     }
 
+    /** 当前玩家此刻能否「跳过」：已投骰，且本轮跳过次数还没用完 */
+    public boolean canSkip() {
+        return phase == Phase.PLACING && lastRoll != null
+                && players.get(currentIdx).skipsLeft > 0;
+    }
+
     /** 当前玩家本次投骰结果（已排序），未投骰时为空 */
     public List<Integer> getLastRoll() {
         return lastRoll == null
@@ -222,6 +259,27 @@ public class LasVegasGame {
     /** 钞票堆剩余总面额 */
     public int getDeckTotalValue() {
         return LasVegasBanknotes.totalValue(new ArrayList<>(deck));
+    }
+
+    /** 累计发放的房规补贴总额 */
+    public int getTotalSubsidy() {
+        return totalSubsidy;
+    }
+
+    /** 累计扣除的跳过罚金总额 */
+    public int getTotalSkipCost() {
+        return totalSkipCost;
+    }
+
+    /**
+     * 房规从体系外注入的净金额 = 补贴 − 跳过罚金（罚金是直接销毁，不转给任何人）。
+     *
+     * 官方 54 张钞票总额是 {@link LasVegasBanknotes#TOTAL_VALUE}，房规会让场上多出这部分，
+     * 所以守恒式是：
+     * {@code 玩家现金 + 赌场钞票 + 钞票堆 == TOTAL_VALUE + getInjectedMoney()}。
+     */
+    public int getInjectedMoney() {
+        return totalSubsidy - totalSkipCost;
     }
 
     /** 全部玩家的战绩快照（座位顺序） */
@@ -328,6 +386,34 @@ public class LasVegasGame {
         advance();
     }
 
+    /**
+     * 房规：跳过本回合（过牌）。
+     *
+     * 不放置任何骰子——骰子全部保留——扣掉 {@link #SKIP_COST}，行动权交给下家；
+     * 等下家（及其余玩家）走完再轮到自己时，可以重新掷一次骰。这就是「用钱换更多机会」。
+     *
+     * 前提是自己还有骰子（能投骰才能跳过），所以本方法不可能触发本轮结算：
+     * {@link #advance()} 只有在「所有人都没有骰子」时才结算，而跳过的玩家一定有骰子。
+     */
+    public void skip() {
+        if (phase != Phase.PLACING) {
+            throw new IllegalStateException("当前阶段不能跳过");
+        }
+        if (lastRoll == null) {
+            throw new IllegalStateException("请先投骰");
+        }
+        Player player = players.get(currentIdx);
+        if (player.skipsLeft <= 0) {
+            throw new IllegalStateException(
+                    "本轮跳过次数已用完（每轮最多 " + SKIPS_PER_ROUND + " 次）");
+        }
+        player.skipsLeft--;
+        player.money -= SKIP_COST;
+        totalSkipCost += SKIP_COST;
+        lastRoll = null;
+        advance();
+    }
+
     // ------------------------------------------------------------------
     // 内部流程
     // ------------------------------------------------------------------
@@ -338,12 +424,16 @@ public class LasVegasGame {
         }
     }
 
-    /** 开始新一轮：重置骰子、清空赌场、补钞至每场 ≥ $50,000 */
+    /** 开始新一轮：发放房规补贴、重置骰子与跳过次数、清空赌场、补钞至每场 ≥ $50,000 */
     private void startRound() {
         round++;
         for (Player player : players) {
             player.diceLeft = DICE_PER_PLAYER;
+            // 房规：每轮（含第 1 轮）开局先发补贴；跳过罚金就从这笔钱里扣
+            player.money += ROUND_SUBSIDY;
+            player.skipsLeft = SKIPS_PER_ROUND;
         }
+        totalSubsidy += ROUND_SUBSIDY * players.size();
         for (int v = 1; v <= CASINO_COUNT; v++) {
             Casino casino = casinos[v];
             casino.banknotes.clear();

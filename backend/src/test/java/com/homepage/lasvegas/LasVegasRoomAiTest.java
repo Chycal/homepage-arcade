@@ -312,13 +312,17 @@ class LasVegasRoomAiTest {
             assertThat(state.get("winners")).isNotNull();
             assertThat(state.get("matchId")).isNotNull();
 
-            // 两个座位都应当有收入或至少被正确结算（钱不会凭空多出来）
+            // 两个座位都应当有收入或至少被正确结算（钱不会凭空多出来）。
+            // 上界 = 官方钞票总额 + 4 轮 × 每人 2 万的房规补贴。
             int total = 0;
+            int players = 0;
             for (Map<String, Object> player : host.players()) {
                 total += ((Number) player.get("money")).intValue();
+                players++;
             }
+            int subsidy = LasVegasGame.ROUND_SUBSIDY * LasVegasGame.TOTAL_ROUNDS * players;
             assertThat(total).isGreaterThan(0)
-                    .isLessThanOrEqualTo(LasVegasBanknotes.TOTAL_VALUE);
+                    .isLessThanOrEqualTo(LasVegasBanknotes.TOTAL_VALUE + subsidy);
         }
 
         @Test
@@ -365,6 +369,85 @@ class LasVegasRoomAiTest {
             assertThat(host.state().get("phase")).isEqualTo("FINISHED");
             // 4 轮里真人至少应当行动若干次，而不是被 AI 完全接管
             assertThat(humanTurns).isGreaterThan(0);
+        }
+
+        @Test
+        @DisplayName("房规：真人可以跳过本回合，扣钱但保留骰子")
+        void humanCanSkip() throws Exception {
+            Client host = join("host");
+            addAi(host);
+            send(host, "{\"type\":\"start\"}");
+
+            // 等到轮到自己掷骰
+            Map<String, Object> state = awaitTurn(host, "canRoll");
+            assertThat(state.get("skipCost"))
+                    .isEqualTo(LasVegasGame.SKIP_COST);
+            assertThat(state.get("roundSubsidy"))
+                    .isEqualTo(LasVegasGame.ROUND_SUBSIDY);
+            assertThat(state.get("maxSkipsPerRound"))
+                    .isEqualTo(LasVegasGame.SKIPS_PER_ROUND);
+
+            send(host, "{\"type\":\"roll\"}");
+            state = awaitTurn(host, "canChoose");
+            assertThat(state.get("canSkip")).isEqualTo(true);
+            assertThat(state.get("skipsLeft")).isEqualTo(LasVegasGame.SKIPS_PER_ROUND);
+
+            int diceBefore = diceLeftOf(state, "you");
+            int moneyBefore = moneyOf(state, "you");
+
+            send(host, "{\"type\":\"skip\"}");
+            state = awaitTurn(host, "canRoll");
+
+            assertThat(diceLeftOf(state, "you"))
+                    .as("跳过不消耗骰子").isEqualTo(diceBefore);
+            assertThat(moneyOf(state, "you"))
+                    .as("跳过一次扣 1 万").isEqualTo(moneyBefore - LasVegasGame.SKIP_COST);
+        }
+
+        @Test
+        @DisplayName("房规：观战者不能跳过")
+        void spectatorCannotSkip() throws Exception {
+            Client host = join("host");
+            addAi(host);
+            Client watcher = spectate("watcher");
+            send(host, "{\"type\":\"start\"}");
+            assertThat(host.state().get("phase")).isEqualTo("PLAYING");
+
+            // 观战者没有座位，requirePlayingTurn 查不到 key，直接拒绝
+            send(watcher, "{\"type\":\"skip\"}");
+            assertThat(watcher.lastError()).contains("请先加入房间");
+        }
+
+        @Test
+        @DisplayName("房规：没投骰就跳过会被拒绝")
+        void skipBeforeRollIsRejected() throws Exception {
+            Client host = join("host");
+            addAi(host);
+            send(host, "{\"type\":\"start\"}");
+
+            awaitTurn(host, "canRoll");
+            send(host, "{\"type\":\"skip\"}");
+            assertThat(host.lastError()).contains("请先投骰");
+        }
+
+        @Test
+        @DisplayName("房规：每次跳过都会消耗一次机会并下发给前端")
+        void skipConsumesOneChance() throws Exception {
+            Client host = join("host");
+            addAi(host);
+            send(host, "{\"type\":\"start\"}");
+
+            awaitTurn(host, "canRoll");
+            send(host, "{\"type\":\"roll\"}");
+            Map<String, Object> before = awaitTurn(host, "canChoose");
+            assertThat(before.get("skipsLeft")).isEqualTo(LasVegasGame.SKIPS_PER_ROUND);
+
+            send(host, "{\"type\":\"skip\"}");
+            // 跳过之后轮到 AI，等回自己时跳过次数已少一次（同一轮内不会重置，
+            // 因为自己手里还有骰子，本轮不可能结算）
+            Map<String, Object> after = awaitTurn(host, "canRoll");
+            assertThat(after.get("skipsLeft")).isEqualTo(LasVegasGame.SKIPS_PER_ROUND - 1);
+            assertThat(skipLeftOf(after, "you")).isEqualTo(LasVegasGame.SKIPS_PER_ROUND - 1);
         }
 
         @Test
@@ -749,6 +832,58 @@ class LasVegasRoomAiTest {
         }
         throw new AssertionError("对局未在 30 秒内结束，当前阶段="
                 + human.state().get("phase"));
+    }
+
+    /** 阻塞等待某个回合标志出现（如 canRoll / canChoose），超时抛断言错误 */
+    private Map<String, Object> awaitTurn(Client client, String flag) throws Exception {
+        long deadline = System.currentTimeMillis() + 20_000;
+        Map<String, Object> state = null;
+        while (System.currentTimeMillis() < deadline) {
+            state = client.state();
+            if (Boolean.TRUE.equals(state.get(flag))) {
+                return state;
+            }
+            if ("FINISHED".equals(state.get("phase"))) {
+                break;
+            }
+            Thread.sleep(5);
+        }
+        throw new AssertionError("等待 " + flag + " 超时，当前状态="
+                + (state == null ? "null" : state.get("phase")));
+    }
+
+    /** 从状态里取自己的剩余骰子（必须处于对局中） */
+    @SuppressWarnings("unchecked")
+    private int diceLeftOf(Map<String, Object> state, String actor) {
+        return ((Number) actorOf(state, actor).get("diceLeft")).intValue();
+    }
+
+    /** 从状态里取自己的资金（必须处于对局中） */
+    @SuppressWarnings("unchecked")
+    private int moneyOf(Map<String, Object> state, String actor) {
+        return ((Number) actorOf(state, actor).get("money")).intValue();
+    }
+
+    /** 从状态里取自己的剩余跳过次数（必须处于对局中） */
+    @SuppressWarnings("unchecked")
+    private int skipLeftOf(Map<String, Object> state, String actor) {
+        return ((Number) actorOf(state, actor).get("skipsLeft")).intValue();
+    }
+
+    /** 在 players 里定位「我」那一行（actor 目前只支持 "you"） */
+    @SuppressWarnings("unchecked")
+    private Map<String, Object> actorOf(Map<String, Object> state, String actor) {
+        if (!"you".equals(actor)) {
+            throw new IllegalArgumentException("暂不支持的 actor: " + actor);
+        }
+        String you = String.valueOf(state.get("you"));
+        List<Map<String, Object>> players = (List<Map<String, Object>>) state.get("players");
+        for (Map<String, Object> player : players) {
+            if (you.equals(String.valueOf(player.get("key")))) {
+                return player;
+            }
+        }
+        throw new AssertionError("状态里找不到自己（you=" + you + "）");
     }
 
     /** 从状态里取「骰子最多」的点数 */

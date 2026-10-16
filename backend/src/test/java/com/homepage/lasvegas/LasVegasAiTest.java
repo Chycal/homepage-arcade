@@ -346,6 +346,123 @@ class LasVegasAiTest {
     }
 
     @Nested
+    @DisplayName("房规：跳过决策")
+    class Skipping {
+
+        @Test
+        @DisplayName("没有跳过机会时一律不跳过")
+        void noSkipsLeftMeansNo() {
+            int players = 2;
+            int[][] dice = new int[LasVegasGame.CASINO_COUNT + 1][players];
+            dice[1][1] = 8; // 对手独占最肥的赌场，我的处境很差
+            LasVegasAi.View view = new LasVegasAi.View(players, 1, dice, new int[]{3, 0},
+                    notes(new int[]{10000}), new int[]{0, 0});
+            assertThat(LasVegasAi.shouldSkip(view, 0, Arrays.asList(1, 1, 2, 3),
+                    0, LasVegasAi.Style.WILD)).isFalse();
+        }
+
+        @Test
+        @DisplayName("投骰结果为空时不跳过")
+        void emptyRollMeansNo() {
+            LasVegasAi.View view = blankView(2, 1, notes(new int[]{90000}), new int[]{0, 0});
+            assertThat(LasVegasAi.shouldSkip(view, 0, new ArrayList<>(),
+                    LasVegasGame.SKIPS_PER_ROUND, LasVegasAi.Style.WILD)).isFalse();
+        }
+
+        @Test
+        @DisplayName("手上有稳拿的好牌时不跳过")
+        void goodPlacementKeepsTurn() {
+            // 1 号赌场 $90,000，对手没有骰子 → 我放 3 颗稳拿，重掷不可能更好
+            LasVegasAi.View view = blankView(2, 1, notes(new int[]{90000}), new int[]{0, 0});
+            view = withDiceLeft(view, new int[]{3, 0});
+            assertThat(LasVegasAi.shouldSkip(view, 0, Arrays.asList(1, 1, 1),
+                    LasVegasGame.SKIPS_PER_ROUND, LasVegasAi.Style.SOLID)).isFalse();
+        }
+
+        @Test
+        @DisplayName("投骰很差、其它赌场却很肥时愿意跳过")
+        void badRollAndRichCasinoSkips() {
+            // 对手在 1 号赌场压了 6 颗，我掷出 6 个 1 —— 正好和他打平，一无所获；
+            // 而 2-6 号赌场空着且每场都有 $90,000，重掷的期望远高于这一手。
+            int players = 2;
+            int[][] dice = new int[LasVegasGame.CASINO_COUNT + 1][players];
+            dice[1][1] = 6;
+            int[][] casinoNotes = notes(new int[]{10000}, new int[]{90000}, new int[]{90000},
+                    new int[]{90000}, new int[]{90000}, new int[]{90000});
+            LasVegasAi.View view = new LasVegasAi.View(players, 1, dice, new int[]{6, 0},
+                    casinoNotes, new int[]{0, 0});
+            List<Integer> roll = Arrays.asList(1, 1, 1, 1, 1, 1);
+            assertThat(LasVegasAi.shouldSkip(view, 0, roll,
+                    LasVegasGame.SKIPS_PER_ROUND, LasVegasAi.Style.WILD)).isTrue();
+        }
+
+        @Test
+        @DisplayName("门槛是 稳健 15000 > 激进 5000 > 赌徒 0，同一局面下激进/赌徒先跳")
+        void styleThresholdsAreOrdered() {
+            // 只剩 1 颗骰：1 号赌场被对手用同样颗数锁死（我打平 → $0），
+            // 2 号赌场空着但只有 $20,000。
+            // bestNow = 0 + 1×500            =     500
+            // fresh   = 20000 + 1×500        =   20500   （重掷落到 2 号赌场）
+            // net     = 20500 − 500 − 10000  =   10000
+            // → 过不了稳健的 15000，但过得激进的 5000 和赌徒的 0。
+            int players = 2;
+            int[][] dice = new int[LasVegasGame.CASINO_COUNT + 1][players];
+            dice[1][1] = 1;
+            int[][] casinoNotes = notes(new int[]{10000}, new int[]{20000});
+            LasVegasAi.View view = new LasVegasAi.View(players, 1, dice, new int[]{1, 0},
+                    casinoNotes, new int[]{0, 0});
+            List<Integer> roll = Arrays.asList(1);
+
+            assertThat(LasVegasAi.shouldSkip(view, 0, roll,
+                    LasVegasGame.SKIPS_PER_ROUND, LasVegasAi.Style.SOLID))
+                    .as("稳健要求净收益 > 15000，这里是 10000").isFalse();
+            assertThat(LasVegasAi.shouldSkip(view, 0, roll,
+                    LasVegasGame.SKIPS_PER_ROUND, LasVegasAi.Style.BOLD))
+                    .as("激进只要净收益 > 5000").isTrue();
+            assertThat(LasVegasAi.shouldSkip(view, 0, roll,
+                    LasVegasGame.SKIPS_PER_ROUND, LasVegasAi.Style.WILD))
+                    .as("赌徒只要净收益 > 0").isTrue();
+        }
+
+        @Test
+        @DisplayName("同一局面决策可复现")
+        void deterministic() {
+            int players = 2;
+            int[][] dice = new int[LasVegasGame.CASINO_COUNT + 1][players];
+            dice[1][1] = 1;
+            LasVegasAi.View view = new LasVegasAi.View(players, 1, dice, new int[]{1, 0},
+                    notes(new int[]{10000}, new int[]{20000}), new int[]{0, 0});
+            List<Integer> roll = Arrays.asList(1);
+            boolean first = LasVegasAi.shouldSkip(view, 0, roll,
+                    LasVegasGame.SKIPS_PER_ROUND, LasVegasAi.Style.BOLD);
+            boolean second = LasVegasAi.shouldSkip(view, 0, roll,
+                    LasVegasGame.SKIPS_PER_ROUND, LasVegasAi.Style.BOLD);
+            assertThat(second).isEqualTo(first);
+        }
+
+        @Test
+        @DisplayName("非法入参抛出 IllegalArgumentException")
+        void rejectsBadInput() {
+            LasVegasAi.View view = blankView(2, 1, notes(new int[]{90000}), new int[]{0, 0});
+            assertThatThrownBy(() -> LasVegasAi.shouldSkip(null, 0, Arrays.asList(1),
+                    LasVegasGame.SKIPS_PER_ROUND, LasVegasAi.Style.SOLID))
+                    .isInstanceOf(IllegalArgumentException.class);
+            assertThatThrownBy(() -> LasVegasAi.shouldSkip(view, 9, Arrays.asList(1),
+                    LasVegasGame.SKIPS_PER_ROUND, LasVegasAi.Style.SOLID))
+                    .isInstanceOf(IllegalArgumentException.class);
+        }
+
+        @Test
+        @DisplayName("引擎层入口：未投骰时不会建议跳过")
+        void engineEntryRequiresRoll() {
+            LasVegasGame game = new LasVegasGame(playerIds(2),
+                    new ScriptedRoller(randomDice(2, 1)), new Random(1));
+            assertThat(game.canSkip()).isFalse();
+            assertThat(LasVegasAi.shouldSkip(game, LasVegasAi.Style.WILD)).isFalse();
+        }
+    }
+
+    @Nested
     @DisplayName("风险偏好")
     class Aggression {
 
@@ -405,9 +522,11 @@ class LasVegasAiTest {
                     for (int value : money) {
                         total += value;
                     }
-                    // 4 轮里必然有钞票因「平手作废」留在牌堆，所以只能是「不超过」
+                    // 官方钞票不可能全部发完（平手作废的会留在牌堆），
+                    // 但房规每轮还会给每人注入补贴，所以上界是「钞票总额 + 全部补贴」
+                    int subsidy = LasVegasGame.ROUND_SUBSIDY * LasVegasGame.TOTAL_ROUNDS * players;
                     assertThat(total)
-                            .isLessThanOrEqualTo(LasVegasBanknotes.TOTAL_VALUE)
+                            .isLessThanOrEqualTo(LasVegasBanknotes.TOTAL_VALUE + subsidy)
                             .isGreaterThan(0);
                 }
             }

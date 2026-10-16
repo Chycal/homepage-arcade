@@ -74,7 +74,10 @@
     <!-- 回合流程 -->
     <div class="rl-card">
       <h2>3. 回合流程</h2>
-      <p>整局 <b>4 轮</b>。每轮里每位玩家大约有 4–5 次投骰机会。</p>
+      <p>
+        整局 <b>4 轮</b>。每轮里每位玩家大约有 4–5 次投骰机会。
+        另外本站允许<b>花钱跳过</b>本回合，详见第 6 节的房规。
+      </p>
 
       <div class="rl-turnflow">
         <div class="rl-flow-step">
@@ -115,6 +118,9 @@
       <p>
         该玩家本轮剩余回合<b>全部跳过</b>。所以轮末经常出现只剩一个人还有骰子、
         连续行动好几次的情况。
+      </p>
+      <p class="rl-note">
+        这里的「跳过」是<b>免费且被动</b>的，和房规里花钱主动跳过不是一回事。
       </p>
 
       <h3>一轮什么时候结束</h3>
@@ -228,8 +234,66 @@
       </ol>
     </div>
 
+    <!-- 房规：跳过与补贴 -->
+    <div class="rl-card rl-house">
+      <h2>6. 本站房规：跳过与补贴 <span class="rl-house-tag">非官方</span></h2>
+      <p class="rl-lead">
+        官方规则里掷出骰子后<b>必须</b>放一个点数，本站额外允许你<b>花钱跳过</b>——
+        把这一手直接丢掉、不占这回合的名额（骰子一颗不少，下次轮到你时重新掷），
+        用一笔小钱换更高的上限。同时每轮开局人人都会拿到一笔补贴，用来抵消跳过的开销。
+      </p>
+
+      <div class="rl-phase">
+        <span class="rl-phase-tag">补贴</span>
+        <h3>每轮开局每人 +${{ money(ROUND_SUBSIDY) }}</h3>
+        <p>
+          <b>第 1 轮就开始发</b>，之后每一轮开局都发。4 轮下来每人固定拿到
+          <b>${{ money(ROUND_SUBSIDY * TOTAL_ROUNDS) }}</b>，这笔钱和赌场里的钞票完全独立。
+        </p>
+        <p class="rl-note">
+          也就是说：一轮里一次都不跳过的玩家，可以<b>全额</b>留下这 ${{ money(ROUND_SUBSIDY) }}。
+        </p>
+      </div>
+
+      <div class="rl-phase">
+        <span class="rl-phase-tag">跳过</span>
+        <h3>跳过 = 本回合不放骰子，扣 ${{ money(SKIP_COST) }}</h3>
+        <p>
+          掷完骰子之后，如果你对结果不满意，可以点「跳过本回合」：
+        </p>
+        <ol class="rl-steps">
+          <li>本回合<b>不放置任何骰子</b>，这次掷出的点数全部作废。</li>
+          <li>立刻扣掉 <b>${{ money(SKIP_COST) }}</b>，行动权交给下一位玩家。</li>
+          <li>你的骰子<b>一颗都不会少</b>，绕一圈后下次轮到你时再重新掷全部剩余骰子。</li>
+        </ol>
+      </div>
+
+      <div class="rl-phase">
+        <span class="rl-phase-tag">上限</span>
+        <h3>每人每轮最多跳过 {{ SKIPS_PER_ROUND }} 次</h3>
+        <p>
+          跳过次数<b>每轮重置</b>为 {{ SKIPS_PER_ROUND }} 次。用满之后掷出什么就只能放什么，
+          不能再跳过。所以一个人一轮最多花掉 <b>${{ money(SKIP_COST * SKIPS_PER_ROUND) }}</b>。
+        </p>
+      </div>
+
+      <div class="rl-warn">
+        <b>⚠ 跳过和「骰子用完自动跳过」不是一回事。</b>
+        <p>
+          第 3 节里说的「骰子用完后该玩家本轮剩余回合全部跳过」是<b>免费</b>的，
+          不扣钱也不消耗次数；本节说的跳过是<b>主动花钱过牌</b>，要扣 ${{ money(SKIP_COST) }}。
+        </p>
+      </div>
+
+      <p class="rl-note">
+        设计意图：不跳过的玩家稳稳拿满 ${{ money(ROUND_SUBSIDY) }}；
+        跳过的玩家花 ${{ money(SKIP_COST) }} 把这手差牌丢掉，用钱换更多机会。
+        跳过扣掉的钱会<b>直接移出游戏</b>，不会转给任何人，所以全场总金额会随之减少。
+      </p>
+    </div>
+
     <div class="rl-card">
-      <h2>6. 游戏结束与胜负</h2>
+      <h2>7. 游戏结束与胜负</h2>
       <ol class="rl-steps">
         <li><b>4 轮</b>结束后各自数钱，<b>钱最多者胜</b>。</li>
         <li>平手 → 比<b>钞票张数</b>（注意是张数，不是面额）多者胜。</li>
@@ -237,16 +301,20 @@
       </ol>
       <p class="rl-note">
         所以别只盯着大钞——多抢几张小额钞票，在平手时可能就是胜负手。
+        数钱数的是<b>现金总额</b>，已经包含每轮的补贴、也已经扣掉了跳过的开销。
       </p>
     </div>
 
     <!-- 在线对局说明 -->
     <div class="rl-card">
-      <h2>7. 本站对局说明</h2>
+      <h2>8. 本站对局说明</h2>
       <ul class="rl-list">
         <li><b>人数</b>：2–5 人。房主（第一位进入房间的人）点击「开始对局」后开局，开局后不能再加入。</li>
         <li><b>游客可玩</b>：不登录也能加入对局；但只有<b>登录</b>玩家的对局结果会写进战绩表。</li>
-        <li><b>操作</b>：轮到你时，先点「掷骰子」，再从结果里点一个点数放置。</li>
+        <li>
+          <b>操作</b>：轮到你时，先点「掷骰子」，再从结果里点一个点数放置；
+          如果结果太差，也可以点「跳过本回合」（见第 6 节）。
+        </li>
         <li><b>掉线</b>：一人掉线对局继续，重连后回到原座位；若<b>全员掉线</b>，本局作废并回到大厅。</li>
         <li><b>聊天</b>：房间内可发消息。</li>
         <li><b>战绩表</b>：登录后切到「战绩表」标签，可查看自己参与过的对局、名次、奖金和逐位明细。</li>
@@ -255,7 +323,7 @@
 
     <!-- AI 对手 -->
     <div class="rl-card">
-      <h2>8. 电脑对手（AI）</h2>
+      <h2>9. 电脑对手（AI）</h2>
       <p class="rl-note">
         房主可以在大厅里添加电脑对手，一个人也能开局。电脑会自己掷骰、自己选点数，
         不需要任何人操作。最多 5 位玩家（真人 + 电脑合计）。
@@ -274,6 +342,10 @@
           估算每个点数最终大概能带回来多少钱，再挑期望最高的那个；
           越落后的性格越愿意为了更高的上限去承担「可能一分不得」的风险。
         </li>
+        <li>
+          <b>它也会跳过</b>：电脑掷完骰子后，如果这次结果明显不如「重来一手的期望」，
+          它同样会按房规花钱跳过（第 6 节）。性格越激进越舍得掏这笔钱。
+        </li>
         <li><b>管理</b>：只有房主能添加 / 移除电脑对手，且只能在大厅里操作；开局后不能增删。</li>
         <li><b>战绩</b>：电脑不是真实账号，它的成绩不会出现在任何人的战绩表里。</li>
         <li><b>移除</b>：如果房间里真人全部离开，电脑会被一并清空。</li>
@@ -282,7 +354,7 @@
 
     <!-- 未实现 -->
     <div class="rl-card rl-muted">
-      <h2>9. 本实现未包含的官方内容</h2>
+      <h2>10. 本实现未包含的官方内容</h2>
       <ul class="rl-list">
         <li><b>中立骰（2–4 人官方变体）</b>：官方为 2–4 人局提供额外中立色骰子以填满赌场，本站未实现。</li>
         <li>
@@ -294,6 +366,7 @@
 
     <p class="rl-source">
       规则依据：Rüdiger Dorn《Las Vegas》(alea 2012，规则书编号 230512)。
+      第 6 节的跳过与补贴是<b>本站自订房规</b>，不在官方规则书中。
     </p>
   </div>
 </template>
@@ -319,12 +392,27 @@ const BANKNOTES = [
 const TOTAL_NOTES = BANKNOTES.reduce((sum, n) => sum + n.count, 0)
 const TOTAL_VALUE = BANKNOTES.reduce((sum, n) => sum + n.value * n.count, 0)
 
+// 房规参数，必须与后端 LasVegasGame 的常量保持一致：
+// ROUND_SUBSIDY / SKIP_COST / SKIPS_PER_ROUND / TOTAL_ROUNDS
+const ROUND_SUBSIDY = 20000
+const SKIP_COST = 10000
+const SKIPS_PER_ROUND = 2
+const TOTAL_ROUNDS = 4
+
 const FACTS = [
   { k: '人数', v: '2–5 人' },
   { k: '骰子', v: '每人 8 颗（40 颗 = 8 颗 × 5 色）' },
   { k: '赌场', v: '6 个（点数 1–6）' },
   { k: '钞票', v: `${TOTAL_NOTES} 张，共 $${TOTAL_VALUE.toLocaleString('en-US')}` },
   { k: '轮数', v: '4 轮' },
+  {
+    k: '房规补贴',
+    v: `每轮开局每人 +$${ROUND_SUBSIDY.toLocaleString('en-US')}`
+  },
+  {
+    k: '房规跳过',
+    v: `每轮最多 ${SKIPS_PER_ROUND} 次，每次扣 $${SKIP_COST.toLocaleString('en-US')}`
+  },
   { k: '胜负', v: '钱最多者胜 → 平手比钞票张数 → 再平手并列胜' }
 ]
 
@@ -337,6 +425,10 @@ export default {
       facts: FACTS,
       totalNotes: TOTAL_NOTES,
       totalValue: TOTAL_VALUE,
+      ROUND_SUBSIDY,
+      SKIP_COST,
+      SKIPS_PER_ROUND,
+      TOTAL_ROUNDS,
       demoNames: ['Anna', 'Benno', 'Carla', 'Denny', 'Emma'],
       // 默认演示「2/2/1/1 全灭」这个反直觉情形
       demoDice: [2, 1, 2, 1, 0]
@@ -632,6 +724,40 @@ export default {
   background: #eef0ff;
   border-radius: 5px;
   padding: 2px 8px;
+}
+
+/* 房规卡片：用暖色和官方规则区分开，提醒读者这不是官方规则书里的内容 */
+.rl-house {
+  background: #fffdf7;
+  border-color: #ffe0b2;
+}
+
+.rl-house h2 {
+  color: #e65100;
+  border-bottom-color: #ffe0b2;
+}
+
+.rl-house .rl-phase {
+  border-left-color: #ffcc80;
+}
+
+.rl-house .rl-phase-tag {
+  color: #e65100;
+  background: #fff3e0;
+}
+
+/* 「非官方」小标签，挂在房规标题后面 */
+.rl-house-tag {
+  display: inline-block;
+  font-size: 11px;
+  font-weight: 600;
+  color: #e65100;
+  background: #fff3e0;
+  border: 1px solid #ffcc80;
+  border-radius: 999px;
+  padding: 1px 8px;
+  margin-left: 6px;
+  vertical-align: middle;
 }
 
 .rl-phase .rl-steps {

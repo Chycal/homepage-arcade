@@ -74,7 +74,12 @@ class LasVegasGameTest {
         }
     }
 
-    /** 全局守恒：玩家现金 + 赌场钞票 + 牌堆 == $2,500,000 */
+    /**
+     * 场上可见的总金额：玩家现金 + 赌场钞票 + 牌堆。
+     *
+     * 含房规后它等于 {@code $2,500,000 + 补贴 − 跳过罚金}，见
+     * {@link #assertMoneyConserved}。
+     */
     private static int totalMoneyInPlay(LasVegasGame game) {
         int sum = 0;
         for (LasVegasGame.Player p : game.getPlayers()) {
@@ -85,6 +90,18 @@ class LasVegasGameTest {
         }
         sum += game.getDeckTotalValue();
         return sum;
+    }
+
+    /**
+     * 房规下的守恒断言：场上的钱 = 官方钞票总额 + 净注入金额。
+     *
+     * 跳过罚金是「销毁」掉的（不转给任何人），所以净注入 = 补贴 − 罚金，
+     * 这正是 {@link LasVegasGame#getInjectedMoney()} 的语义。
+     */
+    private static void assertMoneyConserved(LasVegasGame game, String message) {
+        assertThat(totalMoneyInPlay(game))
+                .as(message)
+                .isEqualTo(LasVegasBanknotes.TOTAL_VALUE + game.getInjectedMoney());
     }
 
     @Nested
@@ -239,7 +256,9 @@ class LasVegasGameTest {
             game.choose(1);
 
             assertThat(game.getRound()).isEqualTo(2); // 已进入第 2 轮
-            assertThat(game.getPlayers()).allSatisfy(p -> assertThat(p.getMoney()).isZero());
+            // 赌场一分没发出去，所以两人手里的钱就是第 1、2 两轮的补贴
+            assertThat(game.getPlayers()).allSatisfy(p ->
+                    assertThat(p.getMoney()).isEqualTo(LasVegasGame.ROUND_SUBSIDY * 2));
             assertThat(game.getLastPayout()).hasSize(6);
             assertThat(game.getLastPayout().get(0).getVoidedSeats()).containsExactly(0, 1);
         }
@@ -257,8 +276,11 @@ class LasVegasGameTest {
 
             assertThat(game.getPlayer(0).getBanknoteCount()).isEqualTo(1);
             assertThat(game.getPlayer(1).getBanknoteCount()).isEqualTo(1);
-            assertThat(game.getPlayer(0).getMoney()).isPositive();
-            assertThat(game.getPlayer(1).getMoney()).isPositive();
+            // 除钞票收益外还有 2 轮补贴
+            assertThat(game.getPlayer(0).getMoney())
+                    .isGreaterThan(LasVegasGame.ROUND_SUBSIDY * 2);
+            assertThat(game.getPlayer(1).getMoney())
+                    .isGreaterThan(LasVegasGame.ROUND_SUBSIDY * 2);
         }
 
         @Test
@@ -315,12 +337,12 @@ class LasVegasGameTest {
     class Conservation {
 
         @Test
-        @DisplayName("整局过程中钞票总额恒为 $2,500,000")
+        @DisplayName("整局过程中「钞票 + 净注入」恒等于场上总额")
         void moneyIsConservedThroughoutGame() {
             LasVegasGame game = new LasVegasGame(players(4),
                     new ScriptedRoller(scriptedRounds(1, 2, 3, 4)), new Random(11));
 
-            assertThat(totalMoneyInPlay(game)).isEqualTo(LasVegasBanknotes.TOTAL_VALUE);
+            assertMoneyConserved(game, "开局");
 
             int guard = 0;
             while (!game.isOver()) {
@@ -334,10 +356,96 @@ class LasVegasGameTest {
                 int value = options.keySet().iterator().next();
                 game.choose(value);
 
-                assertThat(totalMoneyInPlay(game))
-                        .as("第 %d 轮、第 %d 步后的钞票总额", game.getRound(), guard)
-                        .isEqualTo(LasVegasBanknotes.TOTAL_VALUE);
+                assertMoneyConserved(game,
+                        String.format("第 %d 轮、第 %d 步后", game.getRound(), guard));
             }
+        }
+
+        @Test
+        @DisplayName("跳过会真的扣钱，且罚金从场上消失（净注入 = 补贴 − 罚金）")
+        void skippingDestroysMoney() {
+            LasVegasGame game = new LasVegasGame(players(2),
+                    new ScriptedRoller(scriptedRounds(1, 2)), new Random(7));
+
+            int afterGrant = game.getPlayer(0).getMoney();
+            assertThat(afterGrant).isEqualTo(LasVegasGame.ROUND_SUBSIDY);
+            assertMoneyConserved(game, "第 1 轮开局");
+
+            // 玩家0 掷完就跳过：骰子保留、扣 1 万、轮到玩家1
+            game.roll();
+            int diceBefore = game.getPlayer(0).getDiceLeft();
+            game.skip();
+
+            assertThat(game.getPlayer(0).getDiceLeft()).as("跳过不消耗骰子").isEqualTo(diceBefore);
+            assertThat(game.getPlayer(0).getMoney())
+                    .isEqualTo(LasVegasGame.ROUND_SUBSIDY - LasVegasGame.SKIP_COST);
+            assertThat(game.getPlayer(0).getSkipsLeft())
+                    .isEqualTo(LasVegasGame.SKIPS_PER_ROUND - 1);
+            assertThat(game.getTotalSkipCost()).isEqualTo(LasVegasGame.SKIP_COST);
+            assertThat(game.getInjectedMoney())
+                    .isEqualTo(game.getTotalSubsidy() - game.getTotalSkipCost());
+            assertThat(game.getCurrentPlayerIndex()).as("轮到下家").isEqualTo(1);
+            assertThat(game.hasRolled()).as("新玩家的投骰状态已清空").isFalse();
+            // 罚金不转给任何人：场上总额比补贴少了这 1 万
+            assertMoneyConserved(game, "跳过一次后");
+        }
+
+        @Test
+        @DisplayName("每人每轮最多跳过 2 次，第 3 次被拒绝")
+        void skipIsCappedPerRound() {
+            LasVegasGame game = new LasVegasGame(players(2),
+                    new ScriptedRoller(scriptedRounds(1, 1)), new Random(3));
+
+            // 让玩家0 连续跳过两次（中间玩家1 每次都直接放骰子）
+            game.roll();
+            game.skip();
+            assertThat(game.getPlayer(0).getSkipsLeft()).isEqualTo(1);
+            // 玩家1 出一手，把行动权交回来
+            game.roll();
+            game.choose(1);
+            assertThat(game.getCurrentPlayerIndex()).isEqualTo(0);
+
+            game.roll();
+            game.skip();
+            assertThat(game.getPlayer(0).getSkipsLeft()).isZero();
+            assertThat(game.getPlayer(0).getMoney())
+                    .isEqualTo(LasVegasGame.ROUND_SUBSIDY - 2 * LasVegasGame.SKIP_COST);
+            // 玩家1 的 8 颗骰子已全部放进赌场，所以跳过之后直接又轮到玩家0
+            assertThat(game.getCurrentPlayerIndex()).isEqualTo(0);
+            game.roll();
+
+            assertThat(game.canSkip()).isFalse();
+            assertThatThrownBy(game::skip)
+                    .isInstanceOf(IllegalStateException.class)
+                    .hasMessageContaining("跳过次数已用完");
+            assertMoneyConserved(game, "用满跳过次数后");
+        }
+
+        @Test
+        @DisplayName("新一轮会把跳过次数重置为 2")
+        void skipsResetEachRound() {
+            LasVegasGame game = new LasVegasGame(players(2), always(1), new Random(1));
+
+            // 第 1 轮：两人各放 8 颗 → 平手作废 → 进入第 2 轮
+            game.roll();
+            game.choose(1);
+            game.roll();
+            game.choose(1);
+
+            assertThat(game.getRound()).isEqualTo(2);
+            assertThat(game.getPlayers()).allSatisfy(p ->
+                    assertThat(p.getSkipsLeft()).isEqualTo(LasVegasGame.SKIPS_PER_ROUND));
+        }
+
+        @Test
+        @DisplayName("没投骰时不能跳过")
+        void cannotSkipBeforeRolling() {
+            LasVegasGame game = new LasVegasGame(players(2), always(1), new Random(1));
+
+            assertThat(game.canSkip()).isFalse();
+            assertThatThrownBy(game::skip)
+                    .isInstanceOf(IllegalStateException.class)
+                    .hasMessageContaining("请先投骰");
         }
 
         @Test
@@ -350,9 +458,7 @@ class LasVegasGameTest {
                         () -> diceRandom.nextInt(6) + 1, new Random(seed));
                 playToEnd(game);
 
-                assertThat(totalMoneyInPlay(game))
-                        .as("seed=%d 的钞票总额", seed)
-                        .isEqualTo(LasVegasBanknotes.TOTAL_VALUE);
+                assertMoneyConserved(game, String.format("seed=%d", seed));
 
                 // 每轮最多在 6 个赌场各得 1 张钞票 → 4 轮至多 24 张
                 assertThat(game.getPlayers()).allSatisfy(p ->

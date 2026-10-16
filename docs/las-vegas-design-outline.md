@@ -87,6 +87,34 @@
 
 **骰子用完后**：该玩家本轮剩余回合全部跳过（pass）。因此轮末可能出现只剩一人还有骰子、连续行动多次的情况。
 
+> 注意区分：这里的「跳过」是**免费且被动**的，和 §2.1 房规里花钱主动跳过不是一回事。
+
+### 2.1 本站房规：跳过与补贴（⚠ 非官方规则）
+
+官方规则书里掷出骰子后**必须**放一个点数。本站额外加了一条自订房规，允许花钱把这一手丢掉：
+
+| 项 | 值 | 说明 |
+| --- | --- | --- |
+| 每轮补贴 | **+$20,000 / 人** | 每轮开局直接加到现金上，**第 1 轮就开始发**；4 轮共 +$80,000/人 |
+| 跳过成本 | **−$10,000** | 主动跳过本回合时立刻扣除 |
+| 每轮跳过上限 | **2 次** | 每次进入新轮重置；用满后掷出什么就只能放什么 |
+
+**主动跳过（pass）的语义**：本回合**不放任何骰子**，本次掷出的点数全部作废，扣 $10,000，行动权交给下一位玩家；
+**骰子一颗都不会少**，绕一圈后下次轮到自己时再掷全部剩余骰子。这不是「重掷」——不掷第二次，就是把这回合丢掉。
+
+设计意图：不跳过的玩家稳稳拿满 $20,000 补贴；跳过的玩家花 $10,000 把这手差牌丢掉，用钱换更多机会。
+因为跳过的前提是「已经掷过骰」，而掷骰要求 `diceLeft > 0`，所以跳过者手里必然还有骰子，
+**跳过永远不可能触发一轮结算**（结算只在全员骰子用尽时发生）。
+
+💰 **金额守恒恒等式随之改变**。官方牌堆金额固定为 $2,500,000，但房规会注入补贴、销毁跳过罚金，所以：
+
+```
+玩家现金合计 + 赌场钞票合计 + 牌堆剩余 == $2,500,000 + getInjectedMoney()
+getInjectedMoney() == ROUND_SUBSIDY × 人数 × 已发轮数 − SKIP_COST × 已跳过次数
+```
+
+跳过罚金是**销毁**的（不转给任何人），这正是 `getInjectedMoney()` 里要减去它的原因。
+
 **一轮结束**：当**最后一名玩家**把**最后一颗**骰子放到赌场后，立即结算。
 
 ## 3. 结算规则（核心，最易写错）
@@ -374,6 +402,7 @@ GAME_OVER ──> 结算排名（钱 → 张数 → 并列）
 |---|---|
 | `roll` | 阶段为 PLACING；调用者是当前玩家；手上有骰 |
 | `choose` | 点数 ∈ 1..6；该点数在本次投掷结果中**存在** |
+| `skip`（房规） | 阶段为 PLACING；调用者是当前玩家；**已经投过骰**；本轮跳过次数未用尽（< 2） |
 | `place` | 放置的是**该点数的全部**骰子（不可部分）；目标赌场 = 该点数 |
 | 任何操作 | 非当前玩家 → 拒绝；阶段不符 → 拒绝 |
 
@@ -451,13 +480,15 @@ for each casino:
   "players": [ { "key":"u:2", "username":"…", "seat":0,
                  "color":"#e53935", "colorName":"红",
                  "connected":true, "isHost":true, "ai":false, "autopilot":false,
-                 "diceLeft":8, "money":120000, "banknotes":3 } ],
+                 "diceLeft":8, "money":120000, "banknotes":3, "skipsLeft":2 } ],
   "casinos": [ { "value":1, "banknotes":[30000,20000], "total":50000,
                  "dice":[ { "seat":0, "username":"…", "color":"#e53935", "count":4 } ] } ],
   "round": 2, "totalRounds": 4,
   "currentPlayerKey": "u:2", "currentPlayerName": "…", "currentPlayerColor": "#e53935",
   "currentRoll": [3,3,3,5,1,2,6,3],
   "yourRoll": [], "options": {}, "canRoll": false, "canChoose": false,
+  "canSkip": false, "skipsLeft": 0, "skipCost": 10000,
+  "roundSubsidy": 20000, "maxSkipsPerRound": 2,
   "lastPayout": [ { "value":1, "voided":[], "awards":[{"seat":0,"note":40000}], "leftover":[10000] } ],
   "chat": [ { "username":"…", "color":"#e53935", "colorName":"红",
               "spectator":false, "text":"…" } ],
@@ -477,18 +508,21 @@ for each casino:
 | `currentRoll` 当前投骰点数 | ✅ | ✅ | ✅ |
 | `yourRoll` 自己掷出的点数 | ✅ | 空 | 空 |
 | `options` 可选点数 | ✅ | 空 | 空 |
-| `canRoll` / `canChoose` | ✅ | false | false |
+| `canRoll` / `canChoose` / `canSkip` | ✅ | false | false |
+| `skipsLeft`（自己本轮剩余跳过次数） | ✅ | 0 | 0 |
 | `yourColor` / `yourColorName` | ✅ | ✅ | null |
 | `canJoin`（大厅未满时可入座） | false | false | ✅ |
 
 > 关键点：**`currentRoll` 对所有人公开**（含观战者），这是观战的核心看点；
-> 而 `yourRoll` / `options` / `canRoll` / `canChoose` 仍然只给当前玩家，避免观战者代打。
+> 而 `yourRoll` / `options` / `canRoll` / `canChoose` / `canSkip` 仍然只给当前玩家，避免观战者代打。
 > 两者内容在投骰者本人身上是相同的，区别只在于「谁能拿到」。
+> `skipCost` / `roundSubsidy` / `maxSkipsPerRound` 是房规常量（见 §2.1），**在大厅和牌局中都会下发**，
+> 让前端用同一段模板渲染规则提示。
 
 ### 14.3 观战与权限边界
 
 - 观战者存在独立的 `spectators`（`sessionId -> Spectator`）里，**不进 `members`、不进 `sessionToKey`**。
-  于是 `requirePlayingTurn` / `isHost` / `onStart` / `onRoll` / `onChoose` / `onAddAi` / `onRemoveAi`
+  于是 `requirePlayingTurn` / `isHost` / `onStart` / `onRoll` / `onChoose` / `onSkip` / `onAddAi` / `onRemoveAi`
   一律查不到它，自然回落到 `"请先加入房间"`——权限边界由数据结构保证，不靠逐处 if 判断。
 - 任何进入网页的人都能收到 `room_state`：未 `join` 的连接在对局中会自动成为观战者，
   满足「所有进入网页的人都能看到房间里的对战」。
