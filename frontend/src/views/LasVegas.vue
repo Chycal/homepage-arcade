@@ -874,6 +874,13 @@ export default {
   /* 正文左右各让出一条走廊摆侧栏，走廊宽 = 侧栏 + 空隙 */
   --lv-rail-gutter: calc(var(--lv-rail-width) + var(--lv-rail-gap));
 
+  /*
+   * 分端设计：--lv-scale 是「细节放大系数」，只作用于牌桌上的信息元素
+   * （骰子、钞票、赌场卡片、点数按钮）。手机端为 1，宽屏调到 1.25，
+   * 于是同一份结构在电脑上整体更大更好读，在手机上则保持紧凑不溢出。
+   */
+  --lv-scale: 1;
+
   max-width: var(--lv-content);
   margin: 0 auto;
   padding: 20px 16px 60px;
@@ -1172,39 +1179,6 @@ export default {
 
   .lv-rail-right {
     right: calc(50% - var(--lv-content) / 2);
-  }
-}
-
-/* 窄屏：并成一条可横向滚动的头像带，左栏贴左、右栏贴右 */
-@media (max-width: 1099px) {
-  .lv-rail {
-    flex-direction: row;
-    align-items: flex-start;
-    overflow-x: auto;
-    /* 同宽屏：留出负偏移的 🍅 按钮与 AI 角标，别被 overflow 裁掉 */
-    padding: 10px 8px 4px;
-  }
-
-  .lv-rail-left {
-    justify-content: flex-start;
-  }
-
-  .lv-rail-right {
-    justify-content: flex-end;
-  }
-
-  .lv-avatar-slot {
-    flex: none;
-  }
-
-  .lv-avatar {
-    width: 40px;
-    height: 40px;
-    font-size: 16px;
-  }
-
-  .lv-avatar-tomato {
-    opacity: 0.9;
   }
 }
 
@@ -2029,6 +2003,340 @@ export default {
   padding: 5px 9px;
   margin-top: 6px;
 }
+/* ===================== 电脑端：放大细节 ===================== */
+/*
+ * 电脑屏幕大、离得远，同一张牌桌上「剩几颗骰、钞票多大」都要凑近才看清。
+ * 这里不改结构，只把信息元素整体放大，并让 6 家赌场一次全呈现：
+ *
+ *   ≥1100px：--lv-scale 1.25，赌场排成 3 列 × 2 行，每张卡约 250px 宽。
+ *            比原来的 4 列（187px）明显更大，6 个赌场仍在同一屏内。
+ *   ≥1560px：再放宽正文，改成 6 列 × 1 行，一眼横扫 6 家赌场。
+ *
+ * 为什么不直接在所有宽屏都用 6 列：.lv-page 是 border-box，两侧 94px 的
+ * 侧栏走廊是从正文宽度里扣掉的，1100px 时正文只剩 912px，硬塞 6 列每张
+ * 只有 150px，反而比现在更窄——那就和「放大细节」互相打架了。
+ */
+@media (min-width: 1100px) {
+  .lv-page {
+    --lv-scale: 1.25;
+    /* 正文比窄屏宽一些，3 列卡片才舒展 */
+    --lv-content: 1040px;
+    --lv-rail-gap: 16px;
+  }
+
+  /* 3 列 × 2 行：每张卡约 250px，钞票与骰子都有放大余地 */
+  .lv-casinos {
+    grid-template-columns: repeat(3, 1fr);
+    gap: 14px;
+  }
+
+  .lv-casino {
+    padding: calc(12px * var(--lv-scale));
+  }
+
+  /* 赌场序号：13px → 17px，一眼能认出是几号场 */
+  .lv-casino-value {
+    width: calc(22px * var(--lv-scale));
+    height: calc(22px * var(--lv-scale));
+    font-size: calc(13px * var(--lv-scale));
+    border-radius: 8px;
+  }
+
+  .lv-casino-name {
+    font-size: 12px;
+  }
+
+  /* 钞票面额是牌桌主角，放大后一眼可读 */
+  .lv-note {
+    font-size: calc(14px * var(--lv-scale));
+    padding: 3px 8px;
+  }
+
+  .lv-casino-total {
+    font-size: 12px;
+  }
+
+  /* 赌场里的骰子：数字要大，才看得清谁押了几颗 */
+  .lv-dice {
+    width: calc(22px * var(--lv-scale));
+    height: calc(22px * var(--lv-scale));
+    font-size: calc(12px * var(--lv-scale));
+    border-radius: 6px;
+  }
+
+  /* 当前掷出的骰子：再大一档，因为它是本回合的焦点 */
+  .lv-roll-die {
+    min-width: calc(26px * var(--lv-scale));
+    height: calc(26px * var(--lv-scale));
+    font-size: calc(14px * var(--lv-scale));
+    border-radius: 8px;
+  }
+
+  /* 选点数的按钮：点击目标放大，顺带让点数更醒目 */
+  .lv-option {
+    padding: 10px 22px;
+  }
+
+  .lv-option-value {
+    font-size: calc(18px * var(--lv-scale));
+  }
+
+  .lv-option-count {
+    font-size: 12px;
+  }
+
+  /* 头像与文字：适度放大，别让侧栏喧宾夺主 */
+  .lv-avatar {
+    width: 54px;
+    height: 54px;
+    font-size: 21px;
+  }
+
+  .lv-avatar-name {
+    font-size: 12px;
+    max-width: 70px;
+  }
+
+  .lv-avatar-money {
+    font-size: 11px;
+  }
+
+  .lv-legend-list,
+  .lv-legend-item {
+    font-size: 14px;
+  }
+
+  .lv-me-head {
+    font-size: 15px;
+  }
+
+  .lv-round {
+    font-size: 14px;
+    padding: 12px 16px;
+  }
+
+  .lv-current-roll {
+    font-size: 15px;
+    padding: 12px 16px;
+  }
+}
+
+/*
+ * 超宽屏（≥1560px）：6 家赌场排成 1 行，一眼横扫。
+ *
+ * 这里必须同时把 --lv-content 放到 1440px，卡片才既「一排 6 个」又「够大」。
+ * 算法：正文 1440px − 两侧走廊 94px×2 = 1252px，再减 .lv-card 内边距 32px
+ * 得 1220px，减去 5 条 12px 间隙共 60px，每张卡约 193px——比原来的
+ * 4 列 187px 还宽一点，所以「排成一行」没有以牺牲可读性为代价。
+ * 若正文仍停在 1040px，6 列每张只剩 126px，放大后的钞票会被挤掉。
+ */
+@media (min-width: 1560px) {
+  .lv-page {
+    --lv-content: 1440px;
+  }
+
+  .lv-casinos {
+    grid-template-columns: repeat(6, 1fr);
+    gap: 12px;
+  }
+}
+
+/* 窄屏：并成一条可横向滚动的头像带，左栏贴左、右栏贴右 */
+@media (max-width: 1099px) {
+  .lv-rail {
+    flex-direction: row;
+    align-items: flex-start;
+    overflow-x: auto;
+    /* 同宽屏：留出负偏移的 🍅 按钮与 AI 角标，别被 overflow 裁掉 */
+    padding: 10px 8px 4px;
+  }
+
+  .lv-rail-left {
+    justify-content: flex-start;
+  }
+
+  .lv-rail-right {
+    justify-content: flex-end;
+  }
+
+  .lv-avatar-slot {
+    flex: none;
+  }
+
+  .lv-avatar {
+    width: 40px;
+    height: 40px;
+    font-size: 16px;
+  }
+
+  .lv-avatar-tomato {
+    opacity: 0.9;
+  }
+}
+
+/* ===================== 手机端：简化操作 ===================== */
+/*
+ * 手机上竖向空间是稀缺资源：6 张赌场卡在 2 列布局下要占 3 行，
+ * 而「掷骰 / 选点数 / 跳过」这些真正要点的按钮原本排在 6 张卡之后，
+ * 每回合都得先往下滚过整块赌场区才能操作——这是手机端最大的痛点。
+ *
+ * 处理办法：把操作卡 .lv-me 变成贴着视口底部的悬浮操作栏。
+ *   position: sticky + bottom: 0
+ * 它的自然位置本来就在赌场区下方，所以只要还没滚到它，
+ * 它就会被「吸」在视口底部，随页面一直可见；滚到它之后又回到正常位置。
+ * 于是赌场区可以自由滚动查看，操作按钮却始终在拇指范围里，不用来回滚。
+ *
+ * 同时把触控目标放大到 ≥44px（iOS/Android 的推荐下限），
+ * 并把顶部标题区压扁，把省下的高度让给牌桌。
+ */
+@media (max-width: 640px) {
+  .lv-page {
+    /* 底部多留一截，避免悬浮操作栏永久盖住聊天框的最后一行 */
+    padding: 14px 12px 96px;
+  }
+
+  /* ---- 顶部：标题与页签分两行，页签铺满整行变成大按钮 ---- */
+  .lv-header {
+    flex-direction: column;
+    align-items: stretch;
+    gap: 10px;
+    padding: 14px 16px;
+  }
+
+  .lv-title h1 {
+    font-size: 20px;
+  }
+
+  .lv-sub {
+    font-size: 11px;
+  }
+
+  .lv-tabs {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 6px;
+  }
+
+  .lv-tab {
+    /* 原本 6px 14px / 13px，拇指点起来偏小 */
+    padding: 10px 8px;
+    font-size: 14px;
+  }
+
+  /* ---- 你的颜色 / 玩家条：允许换行，别把行撑出屏幕 ---- */
+  .lv-legend-list {
+    flex-wrap: wrap;
+    gap: 6px;
+  }
+
+  .lv-legend-item {
+    font-size: 12px;
+  }
+
+  /* ---- 赌场：2 列，卡内留白收紧，保证一屏能看到 2~3 家 ---- */
+  .lv-casinos {
+    grid-template-columns: repeat(2, 1fr);
+    gap: 8px;
+  }
+
+  .lv-casino {
+    padding: 9px;
+  }
+
+  .lv-casino-name {
+    font-size: 10px;
+  }
+
+  .lv-note {
+    font-size: 13px;
+    padding: 2px 5px;
+  }
+
+  .lv-dice {
+    width: 20px;
+    height: 20px;
+    font-size: 11px;
+  }
+
+  /* ---- 操作栏：吸底 + 大按钮 ---- */
+  .lv-me {
+    position: sticky;
+    bottom: 8px;
+    z-index: 50;
+    /* 吸底时必须自己带实底和阴影，否则会透出下面的赌场内容 */
+    background: #fff;
+    border-color: #d8d8e8;
+    box-shadow: 0 -2px 8px rgba(0, 0, 0, 0.06), 0 6px 20px rgba(0, 0, 0, 0.14);
+    margin-bottom: 0;
+    padding: 12px;
+  }
+
+  /* 操作栏里的状态行容易被挤成两三行，缩小并允许换行 */
+  .lv-me-head {
+    font-size: 12px;
+    flex-wrap: wrap;
+    gap: 2px 10px;
+    margin-bottom: 8px;
+    padding-bottom: 0;
+  }
+
+  /* 「我的颜色」在上方图例卡里已经写了一遍，这里去掉重复项，
+     状态行才能压到一行，吸底栏不至于太高挡住赌场 */
+  .lv-me .lv-me-color {
+    display: none;
+  }
+
+  /* 掷骰：整行大按钮，拇指一下就点中 */
+  .lv-me-body > .lv-btn.primary {
+    width: 100%;
+    min-height: 48px;
+    font-size: 16px;
+  }
+
+  /* 选点数：每个选项都是够大的方块 */
+  .lv-options {
+    gap: 8px;
+  }
+
+  .lv-option {
+    min-height: 56px;
+    padding: 8px 16px;
+    flex: 1 1 auto;
+  }
+
+  .lv-option-value {
+    font-size: 20px;
+  }
+
+  /* 跳过：与其余按钮同宽，避免误触 */
+  .lv-skip-row {
+    flex-direction: column;
+    align-items: stretch;
+    gap: 6px;
+  }
+
+  .lv-btn.lv-skip-btn {
+    width: 100%;
+    min-height: 44px;
+  }
+
+  /* ---- 聊天：手机上压矮，别把牌桌挤走 ---- */
+  .lv-chat-list {
+    max-height: 96px;
+    font-size: 12px;
+  }
+
+  .lv-chat-form input {
+    /* 15px 以下 iOS 会自动放大页面，这里守住 16px */
+    font-size: 16px;
+  }
+
+  .lv-chat-form .lv-btn {
+    min-height: 44px;
+    padding: 8px 16px;
+  }
+}
+
 </style>
 
 <!--

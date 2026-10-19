@@ -896,6 +896,62 @@ export default {
   margin: 4px 0 0;
 }
 
+/* ===================== 电脑端：放大细节 ===================== */
+/*
+ * 规则页是纯阅读内容，放大字号几乎只有收益：屏幕大、行更长，
+ * 14px 正文在大屏上反而显得细碎，适当放大后阅读负担明显下降。
+ * 只需放大字号与行高，不必动结构。
+ */
+@media (min-width: 1100px) {
+  .rl-card {
+    padding: 26px 30px;
+  }
+
+  /* 正文 14 → 16px，行高随之加宽，长段落的阅读节奏更稳 */
+  .rl-card p {
+    font-size: 16px;
+    line-height: 1.85;
+  }
+
+  .rl-card p.rl-lead {
+    font-size: 17px;
+    padding: 12px 16px;
+  }
+
+  /* 表格在宽屏上放开字号，数字用等宽数位对齐才好扫读 */
+  .rl-table {
+    font-size: 15px;
+    margin: 12px 0;
+  }
+
+  .rl-table th,
+  .rl-table td {
+    padding: 10px 14px;
+  }
+
+  .rl-table th {
+    font-size: 14px;
+  }
+
+  .rl-facts li {
+    font-size: 15px;
+    padding: 10px 14px;
+  }
+
+  .rl-phase h3 {
+    font-size: 17px;
+  }
+
+  .rl-flow-step {
+    padding: 12px 14px;
+  }
+
+  .rl-source {
+    font-size: 13px;
+  }
+}
+
+/* ===================== 手机端：简化阅读 ===================== */
 @media (max-width: 640px) {
   .rl-card {
     padding: 14px 15px;
@@ -907,6 +963,38 @@ export default {
 
   .rl-tag {
     margin-left: 0;
+  }
+
+  /* 表格在窄屏上会挤压换行。这里不改变量本身的可读性：
+     保留原字号，允许横向滚动查看，好过把每一列压成一条竖线 */
+  .rl-table {
+    display: block;
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+    white-space: nowrap;
+    font-size: 13px;
+  }
+
+  /* 演示区的加减按钮是手机上唯一要点的东西，放大到可点。
+     原尺寸 26×26 对拇指明显偏小，这里放到 44×44（推荐下限） */
+  .rl-stepper {
+    width: 44px;
+    height: 44px;
+    font-size: 20px;
+  }
+
+  .rl-demo-count {
+    min-width: 36px;
+    font-size: 16px;
+  }
+
+  .rl-demo-player {
+    font-size: 14px;
+  }
+
+  /* 房规卡片是本站的重点，窄屏上给足呼吸空间 */
+  .rl-house {
+    padding: 14px;
   }
 }
 </style>
