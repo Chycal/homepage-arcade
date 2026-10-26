@@ -42,7 +42,13 @@
           :class="gi === 0 ? 'lv-rail-left' : 'lv-rail-right'"
           :aria-label="gi === 0 ? '左侧玩家' : '右侧玩家'"
         >
-          <div v-for="p in group" :key="p.key" class="lv-avatar-slot" :data-avatar="p.key">
+          <div
+            v-for="p in group"
+            :key="p.key"
+            class="lv-avatar-slot"
+            :data-avatar="p.key"
+            :style="{ order: p.seat }"
+          >
             <div
               class="lv-avatar"
               :class="{
@@ -2141,22 +2147,32 @@ export default {
   }
 }
 
-/* 窄屏：并成一条可横向滚动的头像带，左栏贴左、右栏贴右 */
+/* 窄屏：左右两条侧栏合并成一条居中的头像行
+ *
+ * 原来这里让 .lv-rails 保持 display: contents，于是「左栏」「右栏」各自
+ * 成为普通流里的一个独立块，天然分成两行：
+ *   座位 0、2 → 第一行（左对齐）    座位 1 → 第二行（右对齐）
+ * 3 人局就变成「第一行两个、第二行一个」，第一行明明还空着却换行了。
+ *
+ * 现在把 .lv-rails 变成真正的 flex 容器，两条 .lv-rail 用 display: contents
+ * 摊平，头像槽直接成为同一行里的兄弟节点，自然连成一行、满了才换行。
+ * 摊平后左右分栏的先后顺序是 0,2 再 1，所以头像槽用 order: 座位号
+ * 重新排成 0,1,2…（桌面端槽位本就按座位升序，order 不改变其顺序）。
+ */
 @media (max-width: 1099px) {
-  .lv-rail {
-    flex-direction: row;
+  .lv-rails {
+    display: flex;
+    flex-wrap: wrap;
     align-items: flex-start;
-    overflow-x: auto;
-    /* 同宽屏：留出负偏移的 🍅 按钮与 AI 角标，别被 overflow 裁掉 */
-    padding: 10px 8px 4px;
+    justify-content: center;
+    gap: 8px;
+    /* 留出负偏移的 🍅 按钮与 AI 角标的余地（原由 .lv-rail 的内边距提供） */
+    padding: 10px 4px 4px;
   }
 
-  .lv-rail-left {
-    justify-content: flex-start;
-  }
-
-  .lv-rail-right {
-    justify-content: flex-end;
+  .lv-rail {
+    /* 摊平：让头像槽越过侧栏，成为 .lv-rails 的直接 flex 子项 */
+    display: contents;
   }
 
   .lv-avatar-slot {
