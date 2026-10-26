@@ -2293,31 +2293,73 @@ export default {
     font-size: 16px;
   }
 
-  /* 选点数：每个选项都是够大的方块 */
+  /* 选点数：每个选项都是够大的方块，但排成一行不换行。
+     5 个选项若按 flex-wrap 换行会占两行（112px），改成 nowrap 后
+     单行 56px，吸底栏立刻矮一半，赌场才留得出来 */
   .lv-options {
-    gap: 8px;
+    gap: 6px;
+    flex-wrap: nowrap;
+    margin-top: 6px;
   }
 
   .lv-option {
     min-height: 56px;
-    padding: 8px 16px;
-    flex: 1 1 auto;
+    /* 关键：允许收缩到内容宽度以下，5 个才能在 390px 里挤进一行 */
+    flex: 1 1 0;
+    min-width: 0;
+    padding: 6px 4px;
+    gap: 0;
   }
 
   .lv-option-value {
     font-size: 20px;
   }
 
-  /* 跳过：与其余按钮同宽，避免误触 */
+  .lv-option-count {
+    font-size: 10px;
+  }
+
+  /* 选点数时的两条说明文字各占一到两行，是吸底栏过高的主因。
+     但这两句都承载房规语义（"全部骰子一起放进去"、"骰子保留、下次再掷"），
+     直接隐藏等于删掉规则说明，所以只压缩不改内容：
+     字号降到 11px、行高收紧，靠密度把高度省出来。 */
+  .lv-me .lv-tip {
+    display: block;
+    font-size: 11px;
+    line-height: 1.4;
+    padding: 4px 7px;
+    margin-top: 4px;
+  }
+
+  /* 跳过：与其余按钮同宽，避免误触；说明文字同样压缩 */
   .lv-skip-row {
     flex-direction: column;
     align-items: stretch;
-    gap: 6px;
+    gap: 3px;
+    margin-top: 6px;
   }
 
   .lv-btn.lv-skip-btn {
     width: 100%;
     min-height: 44px;
+  }
+
+  /* 这句是房规的关键语义（骰子保留、下次再掷），不能删，
+     但可以压到一行 11px，省出的高度全部还给赌场 */
+  .lv-skip-hint {
+    font-size: 11px;
+    line-height: 1.3;
+    margin: 0;
+  }
+
+  /* 选点数前的提示压成紧凑一行。
+     这段文字含「本次掷出：1、1、2…」+「请选择要放入赌场的点数」，
+     在 390px 下原本换行成 3 行、吃掉 63px，是吸底栏最高的单项。
+     降到 11px/1.35 后约为 2 行 30px，省出 33px 给赌场。 */
+  .lv-me .lv-hint {
+    font-size: 11px;
+    margin: 0 0 4px;
+    line-height: 1.35;
   }
 
   /* ---- 聊天：手机上压矮，别把牌桌挤走 ---- */
