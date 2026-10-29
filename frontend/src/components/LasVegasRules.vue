@@ -26,34 +26,38 @@
       </p>
 
       <h3>赌场（6 个，点数 1–6）</h3>
-      <table class="rl-table">
-        <thead>
-          <tr><th>点数</th><th>赌场</th></tr>
-        </thead>
-        <tbody>
-          <tr v-for="c in casinos" :key="c.value">
-            <td class="rl-num">{{ c.value }}</td>
-            <td>{{ c.name }}</td>
-          </tr>
-        </tbody>
-      </table>
+      <div class="rl-table-scroll">
+        <table class="rl-table">
+          <thead>
+            <tr><th>点数</th><th>赌场</th></tr>
+          </thead>
+          <tbody>
+            <tr v-for="c in casinos" :key="c.value">
+              <td class="rl-num">{{ c.value }}</td>
+              <td>{{ c.name }}</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
 
       <h3>钞票（{{ totalNotes }} 张）</h3>
-      <table class="rl-table">
-        <thead>
-          <tr><th>面额</th><th>张数</th></tr>
-        </thead>
-        <tbody>
-          <tr v-for="n in banknotes" :key="n.value">
-            <td class="rl-num">${{ money(n.value) }}</td>
-            <td>{{ n.count }} 张</td>
-          </tr>
-          <tr class="rl-total">
-            <td>合计</td>
-            <td>{{ totalNotes }} 张 · ${{ money(totalValue) }}</td>
-          </tr>
-        </tbody>
-      </table>
+      <div class="rl-table-scroll">
+        <table class="rl-table">
+          <thead>
+            <tr><th>面额</th><th>张数</th></tr>
+          </thead>
+          <tbody>
+            <tr v-for="n in banknotes" :key="n.value">
+              <td class="rl-num">${{ money(n.value) }}</td>
+              <td>{{ n.count }} 张</td>
+            </tr>
+            <tr class="rl-total">
+              <td>合计</td>
+              <td>{{ totalNotes }} 张 · ${{ money(totalValue) }}</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
     </div>
 
     <!-- 开局 -->
@@ -563,8 +567,11 @@ export default {
   font-size: 13px;
 }
 
+/* 参数名（「人数」「骰子」等）要弱于右侧数值，但原 #888 配 #fafafa
+ * 实测对比度 3.39:1，低于 4.5:1 可读下限。改 #666 后约 5.5:1，
+ * 依旧明显浅于数值，主次关系不变。 */
 .rl-fact-k {
-  color: #888;
+  color: #666;
   flex: none;
   min-width: 36px;
 }
@@ -574,8 +581,31 @@ export default {
   font-weight: 500;
 }
 
+/* 表格横向滚动的容器。
+ *
+ * 不能直接把 overflow-x 加在 <table> 上：那样必须给它 display: block，
+ * 而 table 一旦变成 block，内部会生成「匿名表格盒」并按内容收缩包裹，
+ * 外层块虽然撑满宽度、真正画出来的表格却只有内容那么宽，
+ * 右侧留出大片空白（实测 390px 下空白达 136~175px）。
+ * 正确做法是保持 table 原本的 display，让外层 div 承担滚动。 */
+.rl-table-scroll {
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+}
+
+/* 表格宽度上限 430px。
+ *
+ * 这些表格都是「两列短内容」（点数/赌场名、面额/张数），内容本身只有 150~190px 宽。
+ * 若让它 width:100% 撑满宽卡片，桌面端表格会被拉到 866px、其中约 87% 是死白，
+ * 行线却一路拉满，看着像样式没做完（实测并对比过两种方案）。
+ * 加 max-width 后按容器宽度自动分档：
+ *   - 手机：卡片内宽仅 326px，max-width 不生效 → 仍是满宽，
+ *     此时满宽灰表头与满宽行线恰好把表格闭合成一个完整矩形，观感更好；
+ *   - 平板/桌面：收到 430px 并左对齐，两张表等宽、与上方小标题左缘对齐。
+ * 不要为了「撑满」把它改回纯 width:100%。 */
 .rl-table {
   width: 100%;
+  max-width: 430px;
   border-collapse: collapse;
   font-size: 13px;
   margin: 8px 0;
@@ -602,9 +632,13 @@ export default {
   color: #333;
 }
 
+/* 合计行：上面加粗分隔线，下面同样保留收口线。
+ * 原先这里写了 border-bottom: none，让合计行悬空结束；
+ * 但相邻的赌场表最后一行是有底线的，两张表摆在一起时
+ * 一个收口、一个开口，看起来像合计行下面漏画了线。
+ * 保留 td 的默认底线即可，两张表收尾一致。 */
 .rl-table .rl-total td {
   border-top: 2px solid #eee;
-  border-bottom: none;
   font-weight: 600;
   color: #333;
 }
@@ -865,9 +899,12 @@ export default {
   color: #ef6c00;
 }
 
+/* 「没放骰子」是"这局我没放骰子"的提示，本身要弱化，
+ * 但原 #999 配 #f0f0f0 实测对比度仅 2.5:1，低于正文 4.5:1 的可读下限，
+ * 手机在户外光下几乎看不见。改用 #666，实测 5.0:1，仍然明显弱于正文。 */
 .rl-tag.idle {
   background: #f0f0f0;
-  color: #999;
+  color: #666;
 }
 
 /* 同 .rl-card p.rl-lead：靠权重（0,2,1）压过 .rl-card p，不用 !important */
@@ -889,9 +926,13 @@ export default {
   color: #777;
 }
 
+/* 规则依据是页脚注释，需要弱化但不能看不见：
+ * 原 #aaa 配 #f7f5f0 实测对比度仅 2.13:1，是整页最淡的文字，
+ * 手机上基本读不出来。改 #6b6b6b 后实测 4.9:1（过 4.5 标准），
+ * 仍比正文浅一档，主次关系保留。 */
 .rl-source {
   font-size: 12px;
-  color: #aaa;
+  color: #6b6b6b;
   text-align: center;
   margin: 4px 0 0;
 }
@@ -965,13 +1006,10 @@ export default {
     margin-left: 0;
   }
 
-  /* 表格在窄屏上会挤压换行。这里不改变量本身的可读性：
-     保留原字号，允许横向滚动查看，好过把每一列压成一条竖线 */
+  /* 表格改为由外层 .rl-table-scroll 承担横向滚动，
+     这里不再给 table 本身加 display:block（那会让表格收缩。
+     见 .rl-table-scroll 处的说明）。 */
   .rl-table {
-    display: block;
-    overflow-x: auto;
-    -webkit-overflow-scrolling: touch;
-    white-space: nowrap;
     font-size: 13px;
   }
 
